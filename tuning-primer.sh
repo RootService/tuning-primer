@@ -19,7 +19,7 @@
 #	Download: https://github.com/RootService/tuning-primer				#
 #	Report bugs to: https://github.com/RootService/tuning-primer/issues	#
 #	Changelog: https://github.com/RootService/tuning-primer/commits		#
-#	Version: 2.0.0-b1	Released: 2015-09-03							#
+#	Version: 2.0.0-b2	Released: 2015-09-04							#
 #	Licenced under GPLv2												#
 #	https://github.com/RootService/tuning-primer/blob/master/LICENSE	#
 #																		#
@@ -70,8 +70,8 @@ export white='\033[37m'
 export boldwhite='\033[1;37m'
 
 
-for bin in awk bc du find grep head ls mysql mysqladmin netstat sysctl uname ulimit ; do
-	if [ -z "$(which $bin)" ] ; then
+for bin in awk bc du echo find grep head ls mysql mysqladmin netstat printf sleep sysctl tput umask uname ulimit ; do
+	if [ "$(which -s $bin)" = "0" ] ; then
 		echo "Error: Needed command \"$bin\" not found in PATH!"
 		exit 1
 	else
@@ -94,42 +94,42 @@ cecho ()
 
 	case "$color" in
 		black)
-			printf "$black" ;;
+			$bin_printf "$black" ;;
 		boldblack)
-			printf "$boldblack" ;;
+			$bin_printf "$boldblack" ;;
 		red)
-			printf "$red" ;;
+			$bin_printf "$red" ;;
 		boldred)
-			printf "$boldred" ;;
+			$bin_printf "$boldred" ;;
 		green)
-			printf "$green" ;;
+			$bin_printf "$green" ;;
 		boldgreen)
-			printf "$boldgreen" ;;
+			$bin_printf "$boldgreen" ;;
 		yellow)
-			printf "$yellow" ;;
+			$bin_printf "$yellow" ;;
 		boldyellow)
-			printf "$boldyellow" ;;
+			$bin_printf "$boldyellow" ;;
 		blue)
-			printf "$blue" ;;
+			$bin_printf "$blue" ;;
 		boldblue)
-			printf "$boldblue" ;;
+			$bin_printf "$boldblue" ;;
 		magenta)
-			printf "$magenta" ;;
+			$bin_printf "$magenta" ;;
 		boldmagenta)
-			printf "$boldmagenta" ;;
+			$bin_printf "$boldmagenta" ;;
 		cyan)
-			printf "$cyan" ;;
+			$bin_printf "$cyan" ;;
 		boldcyan)
-			printf "$boldcyan" ;;
+			$bin_printf "$boldcyan" ;;
 		white)
-			printf "$white" ;;
+			$bin_printf "$white" ;;
 		boldwhite)
-			printf "$boldwhite" ;;
+			$bin_printf "$boldwhite" ;;
 	esac
 
-	printf "%s\n" "$message"
-	tput sgr0
-	printf "$black"
+	$bin_printf "%s\n" "$message"
+	$bin_tput sgr0
+	$bin_printf "$black"
 
 	return
 }
@@ -148,42 +148,42 @@ cechon ()
 
 	case "$color" in
 		black)
-			printf "$black" ;;
+			$bin_printf "$black" ;;
 		boldblack)
-			printf "$boldblack" ;;
+			$bin_printf "$boldblack" ;;
 		red)
-			printf "$red" ;;
+			$bin_printf "$red" ;;
 		boldred)
-			printf "$boldred" ;;
+			$bin_printf "$boldred" ;;
 		green)
-			printf "$green" ;;
+			$bin_printf "$green" ;;
 		boldgreen)
-			printf "$boldgreen" ;;
+			$bin_printf "$boldgreen" ;;
 		yellow)
-			printf "$yellow" ;;
+			$bin_printf "$yellow" ;;
 		boldyellow)
-			printf "$boldyellow" ;;
+			$bin_printf "$boldyellow" ;;
 		blue)
-			printf "$blue" ;;
+			$bin_printf "$blue" ;;
 		boldblue)
-			printf "$boldblue" ;;
+			$bin_printf "$boldblue" ;;
 		magenta)
-			printf "$magenta" ;;
+			$bin_printf "$magenta" ;;
 		boldmagenta)
-			printf "$boldmagenta" ;;
+			$bin_printf "$boldmagenta" ;;
 		cyan)
-			printf "$cyan" ;;
+			$bin_printf "$cyan" ;;
 		boldcyan)
-			printf "$boldcyan" ;;
+			$bin_printf "$boldcyan" ;;
 		white)
-			printf "$white" ;;
+			$bin_printf "$white" ;;
 		boldwhite)
-			printf "$boldwhite" ;;
+			$bin_printf "$boldwhite" ;;
 	esac
 
-	printf "%s" "$message"
-	tput sgr0
-	printf "$black"
+	$bin_printf "%s" "$message"
+	$bin_tput sgr0
+	$bin_printf "$black"
 
 	return
 }
@@ -192,9 +192,9 @@ cechon ()
 print_banner ()
 ## -- Banner -- ##
 {
-	cecho " -- MYSQL PERFORMANCE TUNING PRIMER --" boldblue
-	cecho "      - By: Matthew Montgomery -" black
-	cecho "      - By: Markus Kohlmeyer   -" black
+	cecho " -- MYSQL PERFORMANCE TUNING PRIMER 2.0.0-b2 --" boldblue
+	cecho "          - By: Matthew Montgomery -" black
+	cecho "          - By: Markus Kohlmeyer   -" black
 }
 
 
@@ -221,7 +221,7 @@ check_for_socket ()
 	fi
 
 	if [ -S "$socket" ] ; then
-		echo "UP" > /dev/null
+		$bin_echo "UP" > /dev/null
 		cmd_mysql="$bin_mysql -S$socket"
 		cmd_mysqladmin="$bin_mysqladmin -S$socket"
 	else
@@ -239,9 +239,9 @@ check_mysql_login ()
 {
 	is_up="$($cmd_mysqladmin ping 2>&1)"
 	if [ "$is_up" = "mysqld is alive" ] ; then
-		echo "UP" > /dev/null
+		$bin_echo "UP" > /dev/null
 	elif [ "$is_up" != "mysqld is alive" ] ; then
-		printf "\n"
+		cecho " "
 		cecho "Using login values from ~/.my.cnf"
 		cecho "- INITIAL LOGIN ATTEMPT FAILED -" boldred
 		if [ -z "$prompted" ] ; then
@@ -261,7 +261,7 @@ final_login_attempt ()
 {
 	is_up="$($cmd_mysqladmin ping 2>&1)"
 	if [ "$is_up" = "mysqld is alive" ] ; then
-		echo "UP" > /dev/null
+		$bin_echo "UP" > /dev/null
 	elif [ "$is_up" != "mysqld is alive" ] ; then
 		cecho "- FINAL LOGIN ATTEMPT FAILED -" boldred
 		cecho "Unable to log into socket: $socket" boldred
@@ -310,8 +310,8 @@ second_login_failed ()
 		yes | y | Y | YES)
 			answer2="yes"
 			if [ ! -f "~/.my.cnf" ] ; then
-				umask 077
-				printf "[client]\nuser=$user\npassword=$pass\nsocket=$socket" > ~/.my.cnf
+				$bin_umask 077
+				$bin_printf "[client]\nuser=$user\npassword=$pass\nsocket=$socket" > ~/.my.cnf
 				if [ "$answer1" != "yes" ] ; then
 					exit 1
 				else
@@ -319,12 +319,12 @@ second_login_failed ()
 					return 0
 				fi
 			else
-				printf "\n"
+				cecho " "
 				cecho "~/.my.cnf already exists!" boldred
-				printf "\n"
+				cecho " "
 				read -p "Replace? [y/N] : " REPLY
 				if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ] ; then
-					printf "[client]\nuser=$user\npassword=$pass\socket=$socket" > ~/.my.cnf
+					$bin_printf "[client]\nuser=$user\npassword=$pass\socket=$socket" > ~/.my.cnf
 					if [ "$answer1" != "yes" ] ; then
 						exit 1
 					else
@@ -391,7 +391,7 @@ float2int ()
 	local var1="$1"
 	local var2="$2"
 
-	local variable="$(echo "scale=0 ; $var1 / 1" | $bin_bc -l)"
+	local variable="$($bin_echo "scale=0 ; $var1 / 1" | $bin_bc -l)"
 
 	export "$var2"="$variable"
 }
@@ -411,7 +411,7 @@ divide ()
 		dividend="$var1"
 	else
 		cecho "Invalid Dividend" red
-		echo "$usage"
+		cecho "$usage"
 		exit 1
 	fi
 
@@ -419,13 +419,13 @@ divide ()
 		divisor="$var2"
 	else
 		cecho "Invalid Divisor" red
-		echo "$usage"
+		cecho "$usage"
 		exit 1
 	fi
 
 	if [ ! -n "$var3" ] ; then
 		cecho "Invalid variable name" red
-		echo "$usage"
+		cecho "$usage"
 		exit 1
 	fi
 
@@ -435,11 +435,11 @@ divide ()
 		scale="$var4"
 	else
 		cecho "Invalid scale" red
-		echo "$usage"
+		cecho "$usage"
 		exit 1
 	fi
 
-	export "$var3"="$(echo "scale=$scale ; $dividend / $divisor" | $bin_bc -l)"
+	export "$var3"="$($bin_echo "scale=$scale ; $dividend / $divisor" | $bin_bc -l)"
 }
 
 
@@ -490,12 +490,12 @@ human_readable_time ()
 		exit 1
 	fi
 
-	days="$(echo "scale=0 ; $var1 / 86400" | $bin_bc -l)"
-	remainder="$(echo "scale=0 ; $var1 % 86400" | $bin_bc -l)"
-	hours="$(echo "scale=0 ; $remainder / 3600" | $bin_bc -l)"
-	remainder="$(echo "scale=0 ; $remainder % 3600" | $bin_bc -l)"
-	minutes="$(echo "scale=0 ; $remainder / 60" | $bin_bc -l)"
-	seconds="$(echo "scale=0 ; $remainder % 60" | $bin_bc -l)"
+	days="$($bin_echo "scale=0 ; $var1 / 86400" | $bin_bc -l)"
+	remainder="$($bin_echo "scale=0 ; $var1 % 86400" | $bin_bc -l)"
+	hours="$($bin_echo "scale=0 ; $remainder / 3600" | $bin_bc -l)"
+	remainder="$($bin_echo "scale=0 ; $remainder % 3600" | $bin_bc -l)"
+	minutes="$($bin_echo "scale=0 ; $remainder / 60" | $bin_bc -l)"
+	seconds="$($bin_echo "scale=0 ; $remainder % 60" | $bin_bc -l)"
 
 	export "$var2"="$days days $hours hrs $minutes min $seconds sec"
 }
@@ -524,7 +524,7 @@ post_uptime_warning ()
 	cecho "Avg. qps = $queries_per_sec"
 	cecho "Total Questions = $questions"
 	cecho "Threads Connected = $threads"
-	echo ""
+	cecho " "
 
 	if [ $((uptime > 172800)) -ne 0 ] ; then
 		cecho "Server has been running for over 48hrs."
@@ -535,15 +535,10 @@ post_uptime_warning ()
 		cecho "It may not be safe to use these recommendations" boldred
 
 	fi
-	echo ""
+	cecho " "
 	cecho "To find out more information on how each of these" red
 	cecho "runtime variables effects performance visit:" red
-	if [ $((mysql_version_num > 050500)) -ne 0 ] ; then
-		cecho "http://dev.mysql.com/doc/refman/$major_version/en/server-system-variables.html" boldblue
-	else
-		cecho "UNSUPPORTED MYSQL VERSION" boldred
-		exit 1
-	fi
+	cecho "http://dev.mysql.com/doc/refman/$major_version/en/server-system-variables.html" boldblue
 	cecho "Visit http://www.mysql.com/products/enterprise/advisors.html" boldblue
 	cecho "for info about MySQL's Enterprise Monitoring and Advisory Service" boldblue
 }
@@ -672,7 +667,7 @@ check_threads ()
 	cecho "WORKER THREADS" boldblue
 
 	mysql_status \'Threads_created\' threads_created1
-	sleep 1
+	$bin_sleep 1
 	mysql_status \'Threads_created\' threads_created2
 
 	mysql_status \'Threads_cached\' threads_cached
@@ -723,13 +718,13 @@ check_key_buffer_size ()
 		cecho "No key reads?!" boldred
 		cecho "Seriously look into using some indexes" red
 		key_cache_miss_rate="0"
-		key_buffer_free="$(echo "$key_blocks_unused * $key_cache_block_size / $key_buffer_size * 100" | $bin_bc -l)"
-		key_buffer_freeRND="$(echo "scale=0 ; $key_buffer_free / 1" | $bin_bc -l)"
+		key_buffer_free="$($bin_echo "$key_blocks_unused * $key_cache_block_size / $key_buffer_size * 100" | $bin_bc -l)"
+		key_buffer_freeRND="$($bin_echo "scale=0 ; $key_buffer_free / 1" | $bin_bc -l)"
 	else
 		key_cache_miss_rate="$((key_read_requests / $key_reads))"
 		if [ ! -z "$key_blocks_unused" ] ; then
-			key_buffer_free="$(echo "$key_blocks_unused * $key_cache_block_size / $key_buffer_size * 100" | $bin_bc -l)"
-			key_buffer_freeRND="$(echo "scale=0 ; $key_buffer_free / 1" | $bin_bc -l)"
+			key_buffer_free="$($bin_echo "$key_blocks_unused * $key_cache_block_size / $key_buffer_size * 100" | $bin_bc -l)"
+			key_buffer_freeRND="$($bin_echo "scale=0 ; $key_buffer_free / 1" | $bin_bc -l)"
 		else
 			key_buffer_free="Unknown"
 			key_buffer_freeRND="75"
@@ -780,8 +775,8 @@ check_query_cache ()
 		cecho "Perhaps you should set the query_cache_size" red
 	else
 		qcache_used_memory="$((query_cache_size - $qcache_free_memory))"
-		qcache_mem_fill_ratio="$(echo "scale=2 ; $qcache_used_memory * 100 / $query_cache_size" | $bin_bc -l)"
-		qcache_mem_fill_ratioHR="$(echo "scale=0 ; $qcache_mem_fill_ratio / 1" | $bin_bc -l)"
+		qcache_mem_fill_ratio="$($bin_echo "scale=2 ; $qcache_used_memory * 100 / $query_cache_size" | $bin_bc -l)"
+		qcache_mem_fill_ratioHR="$($bin_echo "scale=0 ; $qcache_mem_fill_ratio / 1" | $bin_bc -l)"
 
 		cecho "Query cache is enabled" green
 		human_readable "$query_cache_size" query_cache_sizeHR
@@ -794,8 +789,8 @@ check_query_cache ()
 		human_readable "$query_cache_min_res_unit" query_cache_min_res_unitHR
 		cecho "Current query_cache_min_res_unit = $query_cache_min_res_unitHR $unit"
 		if [ $((qcache_free_blocks > 2)) -ne 0 ] && [ $((qcache_total_blocks > 0)) -ne 0 ] ; then
-			qcache_percent_fragmented="$(echo "scale=2 ; $qcache_free_blocks * 100 / $qcache_total_blocks" | $bin_bc -l)"
-			qcache_percent_fragmentedHR="$(echo "scale=0 ; $qcache_percent_fragmented / 1" | $bin_bc -l)"
+			qcache_percent_fragmented="$($bin_echo "scale=2 ; $qcache_free_blocks * 100 / $qcache_total_blocks" | $bin_bc -l)"
+			qcache_percent_fragmentedHR="$($bin_echo "scale=0 ; $qcache_percent_fragmented / 1" | $bin_bc -l)"
 			if [ $((qcache_percent_fragmentedHR > 20)) -ne 0 ] ; then
 				cecho "Query Cache is $qcache_percent_fragmentedHR % fragmented" red
 				cecho "Run \"FLUSH QUERY CACHE\" periodically to defragment the query cache memory" red
@@ -907,7 +902,7 @@ check_join_operations ()
 		if [ "$raise_buffer" = "yes" ] ; then
 			cecho "If you are unable to optimize your queries you may want to increase your"
 			cecho "join_buffer_size to accommodate larger joins in one pass."
-			printf "\n"
+			cecho " "
 			cecho "Note! This script will still suggest raising the join_buffer_size when" boldred
 			cecho "ANY joins not using indexes are found." boldred
 		fi
@@ -1009,7 +1004,7 @@ check_table_cache ()
 			cecho "You are not '$socket_owner' or 'root'" red
 			cecho "I am unable to determine the table_count!" red
 		else
-			table_count="$($bin_find $datadir 2>&1 | $bin_grep -c .frm$)"
+			table_count="$($bin_find $datadir 2>&1 | $bin_grep -ic .frm$)"
 		fi
 	fi
 
@@ -1167,6 +1162,13 @@ check_innodb_status ()
 		else
 			innodb_enabled="1"
 		fi
+	elif [ $((mysql_version_num >= 050700)) -ne 0 ] ; then
+		mysql_variable \'ignore_builtin_innodb\' ignore_builtin_innodb
+		if [ "$ignore_builtin_innodb" = "ON" ] ; then
+			innodb_enabled="0"
+		else
+			innodb_enabled="1"
+		fi
 	fi
 	if [ $((innodb_enabled == 1)) -ne 0 ] ; then
 		cecho "INNODB STATUS" boldblue
@@ -1240,8 +1242,8 @@ total_memory_used ()
 		effective_tmp_table_size="$tmp_table_size"
 	fi
 
-	per_thread_buffers="$(echo "($read_buffer_size + $read_rnd_buffer_size + $sort_buffer_size + $thread_stack + $join_buffer_size + $binlog_cache_size) * $max_connections" | $bin_bc -l)"
-	per_thread_max_buffers="$(echo "($read_buffer_size + $read_rnd_buffer_size + $sort_buffer_size + $thread_stack + $join_buffer_size + $binlog_cache_size) * $max_used_connections" | $bin_bc -l)"
+	per_thread_buffers="$($bin_echo "($read_buffer_size + $read_rnd_buffer_size + $sort_buffer_size + $thread_stack + $join_buffer_size + $binlog_cache_size) * $max_connections" | $bin_bc -l)"
+	per_thread_max_buffers="$($bin_echo "($read_buffer_size + $read_rnd_buffer_size + $sort_buffer_size + $thread_stack + $join_buffer_size + $binlog_cache_size) * $max_used_connections" | $bin_bc -l)"
 
 	mysql_variable \'innodb_buffer_pool_size\' innodb_buffer_pool_size
 	if [ -z "$innodb_buffer_pool_size" ] ; then
@@ -1268,12 +1270,12 @@ total_memory_used ()
 		query_cache_size="0"
 	fi
 
-	global_buffers="$(echo "$innodb_buffer_pool_size + $innodb_additional_mem_pool_size + $innodb_log_buffer_size + $key_buffer_size + $query_cache_size" | $bin_bc -l)"
+	global_buffers="$($bin_echo "$innodb_buffer_pool_size + $innodb_additional_mem_pool_size + $innodb_log_buffer_size + $key_buffer_size + $query_cache_size" | $bin_bc -l)"
 
-	max_memory="$(echo "$global_buffers + $per_thread_max_buffers" | $bin_bc -l)"
-	total_memory="$(echo "$global_buffers + $per_thread_buffers" | $bin_bc -l)"
+	max_memory="$($bin_echo "$global_buffers + $per_thread_max_buffers" | $bin_bc -l)"
+	total_memory="$($bin_echo "$global_buffers + $per_thread_buffers" | $bin_bc -l)"
 
-	pct_of_sys_mem="$(echo "scale=0 ; $total_memory * 100 / $physical_memory" | $bin_bc -l)"
+	pct_of_sys_mem="$($bin_echo "scale=0 ; $total_memory * 100 / $physical_memory" | $bin_bc -l)"
 
 	if [ $((pct_of_sys_mem > 90)) -ne 0 ] ; then
 		txt_color="boldred"
@@ -1296,7 +1298,7 @@ total_memory_used ()
 	human_readable "$physical_memory" physical_memoryHR
 	cecho "Physical Memory : $physical_memoryHR $unit" $txt_color
 	if [ $((error == 1)) -ne 0 ] ; then
-		printf "\n"
+		cecho " "
 		cecho "Max memory limit exceeds 90% of physical memory" $txt_color
 	else
 		cecho "Max memory limit seem to be within acceptable norms" green
@@ -1320,6 +1322,10 @@ shared_info ()
 	socket_owner="$($bin_ls -lnH $socket | $bin_awk '{ print $3 }')"
 	export major_version="$($cmd_mysql -Bse "SELECT SUBSTRING_INDEX(VERSION(), '.', +2)")"
 	export mysql_version_num="$($cmd_mysql -Bse "SELECT VERSION()" | $bin_awk -F \. '{ printf "%02d", $1; printf "%02d", $2; printf "%02d", $3 }')"
+	if [ $((mysql_version_num < 050500)) -ne 0 ] ; then
+		cecho "UNSUPPORTED MYSQL VERSION" boldred
+		exit 1
+	fi
 }
 
 
@@ -1349,7 +1355,7 @@ get_system_info ()
 		ps_socket="$($bin_netstat -an | $bin_awk '/mysql(.*)?.sock/ { print $5 }' | $bin_head -n 1)"
 		found_socks="$($bin_netstat -an | $bin_awk '/mysql(.*)?.sock/ { print $5 }')"
 		if [ -z "$(which prtconf)" ] ; then
-			echo "Error: Needed command \"prtconf\" not found in PATH!"
+			cecho "Error: Needed command \"prtconf\" not found in PATH!"
 			exit 1
 		else
 			bin_path="$(which prtconf)"
@@ -1364,9 +1370,9 @@ banner_info ()
 ## --	-- ##
 {
 	shared_info
-	print_banner		; echo
-	check_mysql_version	; echo
-	post_uptime_warning	; echo
+	print_banner    		; cecho " "
+	check_mysql_version 	; cecho " "
+	post_uptime_warning 	; cecho " "
 }
 
 
@@ -1374,11 +1380,11 @@ misc ()
 ## --	-- ##
 {
 	shared_info
-	check_slow_queries	; echo
-	check_binary_log	; echo
-	check_threads		; echo
-	check_used_connections	; echo
-	check_innodb_status	; echo
+	check_slow_queries  	; cecho " "
+	check_binary_log    	; cecho " "
+	check_threads   		; cecho " "
+	check_used_connections	; cecho " "
+	check_innodb_status 	; cecho " "
 }
 
 
@@ -1386,11 +1392,11 @@ memory ()
 ## --	-- ##
 {
 	shared_info
-	total_memory_used	; echo
-	check_key_buffer_size	; echo
-	check_query_cache	; echo
-	check_sort_operations	; echo
-	check_join_operations	; echo
+	total_memory_used   	; cecho " "
+	check_key_buffer_size	; cecho " "
+	check_query_cache   	; cecho " "
+	check_sort_operations	; cecho " "
+	check_join_operations	; cecho " "
 }
 
 
@@ -1398,11 +1404,11 @@ file ()
 ## --	-- ##
 {
 	shared_info
-	check_open_files	; echo
-	check_table_cache	; echo
-	check_tmp_tables	; echo
-	check_table_scans	; echo
-	check_table_locking	; echo
+	check_open_files    	; cecho " "
+	check_table_cache   	; cecho " "
+	check_tmp_tables    	; cecho " "
+	check_table_scans   	; cecho " "
+	check_table_locking 	; cecho " "
 }
 
 
@@ -1423,7 +1429,7 @@ prompt ()
 	read -p "Username [anonymous] : " user
 	read -rp "Password [<none>] : " pass
 	cecho " "
-	read -p "Socket [ /var/lib/mysql/mysql.sock ] : " socket
+	read -p "Socket [/var/lib/mysql/mysql.sock] : " socket
 	if [ -z "$socket" ] ; then
 		export socket="/var/lib/mysql/mysql.sock"
 	fi
@@ -1438,7 +1444,7 @@ prompt ()
 
 	login_validation
 
-	if [ $? = 1 ] ; then
+	if [ "$?" = "1" ] ; then
 		exit 1
 	fi
 
