@@ -19,7 +19,7 @@
 #	Download: https://github.com/RootService/tuning-primer				#
 #	Report bugs to: https://github.com/RootService/tuning-primer/issues	#
 #	Changelog: https://github.com/RootService/tuning-primer/commits		#
-#	Version: 2.0.0-b2	Released: 2015-09-04							#
+#	Version: 2.0.0-b3	Released: 2015-09-05							#
 #	Licenced under GPLv2												#
 #	https://github.com/RootService/tuning-primer/blob/master/LICENSE	#
 #																		#
@@ -71,12 +71,13 @@ export boldwhite='\033[1;37m'
 
 
 for bin in awk bc du echo find grep head ls mysql mysqladmin netstat printf sleep sysctl tput umask uname ulimit ; do
-	if [ "$(which -s $bin)" = "0" ] ; then
-		echo "Error: Needed command \"$bin\" not found in PATH!"
-		exit 1
-	else
+	which "$bin" > /dev/null
+	if [ "$?" = "0" ] ; then
 		bin_path="$(which $bin)"
 		export bin_$bin="$bin_path"
+	else
+		echo "Error: Needed command \"$bin\" not found in PATH!"
+		exit 1
 	fi
 done
 
@@ -192,7 +193,7 @@ cechon ()
 print_banner ()
 ## -- Banner -- ##
 {
-	cecho " -- MYSQL PERFORMANCE TUNING PRIMER 2.0.0-b2 --" boldblue
+	cecho " -- MYSQL PERFORMANCE TUNING PRIMER 2.0.0-b3 --" boldblue
 	cecho "          - By: Matthew Montgomery -" black
 	cecho "          - By: Markus Kohlmeyer   -" black
 }
