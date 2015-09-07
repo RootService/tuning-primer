@@ -203,9 +203,7 @@ check_for_socket ()
 ## -- Find the location of the mysql.sock file -- ##
 {
 	if [ -z "$socket" ] ; then
-		if [ -f "~/.my.cnf" ] ; then
-			cnf_socket="$($bin_grep '^socket' ~/.my.cnf | $bin_awk -F \= '{ print $2 }' | $bin_head -n 1)"
-		fi
+		cnf_socket="$($bin_mysql --print-defaults | $bin_grep -o "socket=[^[:space:]]*" | $bin_awk -F \= '{ print $2 }')"
 		if [ -S "$cnf_socket" ] ; then
 			socket="$cnf_socket"
 		elif [ -S "/var/lib/mysql/mysql.sock" ] ; then
