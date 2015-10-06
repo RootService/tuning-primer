@@ -1,15 +1,15 @@
 MySQL Tuning Primer
 ===================
 
-Modernized [tuning-primer.sh](https://github.com/RootService/tuning-primer) for MySQL >= 5.5
+Modernized [MySQL performance tuning primer script](https://github.com/RootService/tuning-primer) for MySQL >= 5.5
 
 
-Based on the MySQL performance tuning primer script version 1.6-r1 released on 2011-08-06 writen by Matthew Montgomery and licenced under the GPLv2.
-[tuning-primer.sh](https://launchpad.net/mysql-tuning-primer)
+Based on the [MySQL performance tuning primer script](https://launchpad.net/mysql-tuning-primer) version 1.6-r1 released on 2011-08-06 by Matthew Montgomery and licenced under the GPLv2.
 
 
 
-mysqltuner.pl
+
+MySQLTuner.pl
 -------------
 
 For a much better solution have a look at the
