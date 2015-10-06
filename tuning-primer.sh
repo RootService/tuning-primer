@@ -1,54 +1,53 @@
 #!/bin/sh
 
-# vim: ts=4
-#########################################################################
-#																		#
-#	MySQL performance tuning primer script								#
-#	Writen by: Matthew Montgomery										#
-#	Report bugs to: https://bugs.launchpad.net/mysql-tuning-primer		#
-#	Inspired by: MySQLARd (http://gert.sos.be/demo/mysqlar/)			#
-#	Version: 1.6-r1		 Released: 2011-08-06							#
-#	Licenced under GPLv2												#
-#																		#
-#########################################################################
+################################################################################
+#                                                                              #
+#    MySQL performance tuning primer script                                    #
+#    Writen by: Matthew Montgomery                                             #
+#    Report bugs to: https://bugs.launchpad.net/mysql-tuning-primer            #
+#    Inspired by: MySQLARd (http://gert.sos.be/demo/mysqlar/)                  #
+#    Version: 1.6-r1         Released: 2011-08-06                              #
+#    Licenced under GPLv2                                                      #
+#                                                                              #
+################################################################################
 
-#########################################################################
-#																		#
-#	MySQL performance tuning primer script								#
-#	Rewritten by: Markus Kohlmeyer										#
-#	Download: https://github.com/RootService/tuning-primer				#
-#	Report bugs to: https://github.com/RootService/tuning-primer/issues	#
-#	Changelog: https://github.com/RootService/tuning-primer/commits		#
-#	Version: 2.0.0-r1	Released: 2015-10-06							#
-#	Licenced under GPLv2												#
-#	https://github.com/RootService/tuning-primer/blob/master/LICENSE	#
-#																		#
-#########################################################################
+################################################################################
+#                                                                              #
+#    MySQL performance tuning primer script                                    #
+#    Rewritten by: Markus Kohlmeyer                                            #
+#    Download: https://github.com/RootService/tuning-primer                    #
+#    Report bugs to: https://github.com/RootService/tuning-primer/issues       #
+#    Changelog: https://github.com/RootService/tuning-primer/commits           #
+#    Version: 2.0.0-r1    Released: 2015-10-06                                 #
+#    Licenced under GPLv2                                                      #
+#    https://github.com/RootService/tuning-primer/blob/master/LICENSE          #
+#                                                                              #
+################################################################################
 
-#########################################################################
-#																		#
-#	Usage: ./tuning-primer.sh [ mode ]									#
-#																		#
-#	Available Modes:													#
-#		all :			perform all checks (default)					#
-#		prompt :		prompt for login credintials and socket 		#
-#						and execution mode								#
-#		mem, memory :	run checks for tunable options which			#
-#						effect memory usage								#
-#		disk, file :	run checks for options which effect				#
-#						i/o performance or file handle limits			#
-#		innodb :		run InnoDB checks /* to be improved */			#
-#		misc :			run checks for that don't categorise			#
-#						well Slow Queries, Binary logs,					#
-#						Used Connections and Worker Threads				#
-#																		#
-#########################################################################
-#																		#
-# Set this socket variable ONLY if you have multiple instances running	#
-# or we are unable to find your socket, and you don't want to to be		#
-# prompted for input each time you run this script.						#
-#																		#
-#########################################################################
+################################################################################
+#                                                                              #
+#    Usage: ./tuning-primer.sh [ mode ]                                        #
+#                                                                              #
+#    Available Modes:                                                          #
+#        all :           perform all checks (default)                          #
+#        prompt :        prompt for login credintials and socket               #
+#                        and execution mode                                    #
+#        mem, memory :   run checks for tunable options which                  #
+#                        effect memory usage                                   #
+#        disk, file :    run checks for options which effect                   #
+#                        i/o performance or file handle limits                 #
+#        innodb :        run InnoDB checks /* to be improved */                #
+#        misc :          run checks for that don't categorise                  #
+#                        well Slow Queries, Binary logs,                       #
+#                        Used Connections and Worker Threads                   #
+#                                                                              #
+################################################################################
+#                                                                              #
+#    Set this socket variable ONLY if you have multiple instances running      #
+#    or we are unable to find your socket, and you don't want to to be         #
+#    prompted for input each time you run this script.                         #
+#                                                                              #
+################################################################################
 socket=
 
 
