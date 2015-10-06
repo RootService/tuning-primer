@@ -19,7 +19,7 @@
 #	Download: https://github.com/RootService/tuning-primer				#
 #	Report bugs to: https://github.com/RootService/tuning-primer/issues	#
 #	Changelog: https://github.com/RootService/tuning-primer/commits		#
-#	Version: 2.0.0-b3	Released: 2015-09-05							#
+#	Version: 2.0.0-r1	Released: 2015-10-06							#
 #	Licenced under GPLv2												#
 #	https://github.com/RootService/tuning-primer/blob/master/LICENSE	#
 #																		#
@@ -193,7 +193,7 @@ cechon ()
 print_banner ()
 ## -- Banner -- ##
 {
-	cecho " -- MYSQL PERFORMANCE TUNING PRIMER 2.0.0-b3 --" boldblue
+	cecho " -- MYSQL PERFORMANCE TUNING PRIMER 2.0.0-r1 --" boldblue
 	cecho "          - By: Matthew Montgomery -" black
 	cecho "          - By: Markus Kohlmeyer   -" black
 }
