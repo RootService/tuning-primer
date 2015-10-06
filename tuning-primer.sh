@@ -70,7 +70,7 @@ export white='\033[37m'
 export boldwhite='\033[1;37m'
 
 
-for bin in awk bc du echo find grep head ls mysql mysqladmin netstat printf sleep sysctl tput umask uname ulimit ; do
+for bin in awk bc du echo find grep head ls mysql mysqladmin netstat printf sleep sysctl tput uname ulimit ; do
 	which "$bin" > /dev/null
 	if [ "$?" = "0" ] ; then
 		bin_path="$(which $bin)"
@@ -309,7 +309,7 @@ second_login_failed ()
 		yes | y | Y | YES)
 			answer2="yes"
 			if [ ! -f "~/.my.cnf" ] ; then
-				$bin_umask 077
+				umask 077
 				$bin_printf "[client]\nuser=$user\npassword=$pass\nsocket=$socket" > ~/.my.cnf
 				if [ "$answer1" != "yes" ] ; then
 					exit 1
