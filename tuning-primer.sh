@@ -69,7 +69,7 @@ export white='\033[37m'
 export boldwhite='\033[1;37m'
 
 
-for bin in awk bc du echo find grep head ls mysql mysqladmin netstat printf sleep sysctl tput uname ulimit ; do
+for bin in awk bc du echo find grep head ls mysql mysqladmin netstat printf sleep sysctl tput uname ; do
 	which "$bin" > /dev/null
 	if [ "$?" = "0" ] ; then
 		bin_path="$(which $bin)"
@@ -956,7 +956,7 @@ check_open_files ()
 	mysql_variable \'open_files_limit\' open_files_limit
 
 	if [ -z "$open_files_limit" ] || [ $((open_files_limit == 0)) -ne 0 ] ; then
-		open_files_limit="$($bin_ulimit -n)"
+		open_files_limit="$(ulimit -n)"
 		cant_override="1"
 	else
 		cant_override="0"
