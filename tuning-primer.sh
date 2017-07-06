@@ -18,7 +18,7 @@
 #    Download: https://github.com/RootService/tuning-primer                    #
 #    Report bugs to: https://github.com/RootService/tuning-primer/issues       #
 #    Changelog: https://github.com/RootService/tuning-primer/commits           #
-#    Version: 2.0.0-r1    Released: 2015-10-06                                 #
+#    Version: 2.0.1-r1    Released: 2017-06-07                                 #
 #    Licenced under GPLv2                                                      #
 #    https://github.com/RootService/tuning-primer/blob/master/LICENSE          #
 #                                                                              #
@@ -69,7 +69,7 @@ export white='\033[37m'
 export boldwhite='\033[1;37m'
 
 
-for bin in awk bc du echo find grep head ls mysql mysqladmin netstat printf sleep sysctl tput uname ulimit ; do
+for bin in awk bc du find grep head ls mysql mysqladmin netstat sleep sysctl tput uname ; do
     which "$bin" > /dev/null
     if [ "$?" = "0" ] ; then
         bin_path="$(which $bin)"
@@ -94,42 +94,42 @@ cecho ()
 
     case "$color" in
         black)
-            $bin_printf "$black" ;;
+            printf "$black" ;;
         boldblack)
-            $bin_printf "$boldblack" ;;
+            printf "$boldblack" ;;
         red)
-            $bin_printf "$red" ;;
+            printf "$red" ;;
         boldred)
-            $bin_printf "$boldred" ;;
+            printf "$boldred" ;;
         green)
-            $bin_printf "$green" ;;
+            printf "$green" ;;
         boldgreen)
-            $bin_printf "$boldgreen" ;;
+            printf "$boldgreen" ;;
         yellow)
-            $bin_printf "$yellow" ;;
+            printf "$yellow" ;;
         boldyellow)
-            $bin_printf "$boldyellow" ;;
+            printf "$boldyellow" ;;
         blue)
-            $bin_printf "$blue" ;;
+            printf "$blue" ;;
         boldblue)
-            $bin_printf "$boldblue" ;;
+            printf "$boldblue" ;;
         magenta)
-            $bin_printf "$magenta" ;;
+            printf "$magenta" ;;
         boldmagenta)
-            $bin_printf "$boldmagenta" ;;
+            printf "$boldmagenta" ;;
         cyan)
-            $bin_printf "$cyan" ;;
+            printf "$cyan" ;;
         boldcyan)
-            $bin_printf "$boldcyan" ;;
+            printf "$boldcyan" ;;
         white)
-            $bin_printf "$white" ;;
+            printf "$white" ;;
         boldwhite)
-            $bin_printf "$boldwhite" ;;
+            printf "$boldwhite" ;;
     esac
 
-    $bin_printf "%s\n" "$message"
+    printf "%s\n" "$message"
     $bin_tput sgr0
-    $bin_printf "$black"
+    printf "$black"
 
     return
 }
@@ -148,42 +148,42 @@ cechon ()
 
     case "$color" in
         black)
-            $bin_printf "$black" ;;
+            printf "$black" ;;
         boldblack)
-            $bin_printf "$boldblack" ;;
+            printf "$boldblack" ;;
         red)
-            $bin_printf "$red" ;;
+            printf "$red" ;;
         boldred)
-            $bin_printf "$boldred" ;;
+            printf "$boldred" ;;
         green)
-            $bin_printf "$green" ;;
+            printf "$green" ;;
         boldgreen)
-            $bin_printf "$boldgreen" ;;
+            printf "$boldgreen" ;;
         yellow)
-            $bin_printf "$yellow" ;;
+            printf "$yellow" ;;
         boldyellow)
-            $bin_printf "$boldyellow" ;;
+            printf "$boldyellow" ;;
         blue)
-            $bin_printf "$blue" ;;
+            printf "$blue" ;;
         boldblue)
-            $bin_printf "$boldblue" ;;
+            printf "$boldblue" ;;
         magenta)
-            $bin_printf "$magenta" ;;
+            printf "$magenta" ;;
         boldmagenta)
-            $bin_printf "$boldmagenta" ;;
+            printf "$boldmagenta" ;;
         cyan)
-            $bin_printf "$cyan" ;;
+            printf "$cyan" ;;
         boldcyan)
-            $bin_printf "$boldcyan" ;;
+            printf "$boldcyan" ;;
         white)
-            $bin_printf "$white" ;;
+            printf "$white" ;;
         boldwhite)
-            $bin_printf "$boldwhite" ;;
+            printf "$boldwhite" ;;
     esac
 
-    $bin_printf "%s" "$message"
+    printf "%s" "$message"
     $bin_tput sgr0
-    $bin_printf "$black"
+    printf "$black"
 
     return
 }
@@ -192,7 +192,7 @@ cechon ()
 print_banner ()
 ## -- Banner -- ##
 {
-    cecho " -- MYSQL PERFORMANCE TUNING PRIMER 2.0.0-r1 --" boldblue
+    cecho " -- MYSQL PERFORMANCE TUNING PRIMER 2.0.1-r1 --" boldblue
     cecho "          - By: Matthew Montgomery -" black
     cecho "          - By: Markus Kohlmeyer   -" black
 }
@@ -219,7 +219,7 @@ check_for_socket ()
     fi
 
     if [ -S "$socket" ] ; then
-        $bin_echo "UP" > /dev/null
+        echo "UP" > /dev/null
         cmd_mysql="$bin_mysql -S$socket"
         cmd_mysqladmin="$bin_mysqladmin -S$socket"
     else
@@ -237,7 +237,7 @@ check_mysql_login ()
 {
     is_up="$($cmd_mysqladmin ping 2>&1)"
     if [ "$is_up" = "mysqld is alive" ] ; then
-        $bin_echo "UP" > /dev/null
+        echo "UP" > /dev/null
     elif [ "$is_up" != "mysqld is alive" ] ; then
         cecho " "
         cecho "Using login values from ~/.my.cnf"
@@ -259,7 +259,7 @@ final_login_attempt ()
 {
     is_up="$($cmd_mysqladmin ping 2>&1)"
     if [ "$is_up" = "mysqld is alive" ] ; then
-        $bin_echo "UP" > /dev/null
+        echo "UP" > /dev/null
     elif [ "$is_up" != "mysqld is alive" ] ; then
         cecho "- FINAL LOGIN ATTEMPT FAILED -" boldred
         cecho "Unable to log into socket: $socket" boldred
@@ -309,7 +309,7 @@ second_login_failed ()
             answer2="yes"
             if [ ! -f "~/.my.cnf" ] ; then
                 umask 077
-                $bin_printf "[client]\nuser=$user\npassword=$pass\nsocket=$socket" > ~/.my.cnf
+                printf "[client]\nuser=$user\npassword=$pass\nsocket=$socket" > ~/.my.cnf
                 if [ "$answer1" != "yes" ] ; then
                     exit 1
                 else
@@ -322,7 +322,7 @@ second_login_failed ()
                 cecho " "
                 read -p "Replace? [y/N] : " REPLY
                 if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ] ; then
-                    $bin_printf "[client]\nuser=$user\npassword=$pass\socket=$socket" > ~/.my.cnf
+                    printf "[client]\nuser=$user\npassword=$pass\socket=$socket" > ~/.my.cnf
                     if [ "$answer1" != "yes" ] ; then
                         exit 1
                     else
@@ -389,7 +389,7 @@ float2int ()
     local var1="$1"
     local var2="$2"
 
-    local variable="$($bin_echo "scale=0 ; $var1 / 1" | $bin_bc -l)"
+    local variable="$(echo "scale=0 ; $var1 / 1" | $bin_bc -l)"
 
     export "$var2"="$variable"
 }
@@ -437,7 +437,7 @@ divide ()
         exit 1
     fi
 
-    export "$var3"="$($bin_echo "scale=$scale ; $dividend / $divisor" | $bin_bc -l)"
+    export "$var3"="$(echo "scale=$scale ; $dividend / $divisor" | $bin_bc -l)"
 }
 
 
@@ -488,12 +488,12 @@ human_readable_time ()
         exit 1
     fi
 
-    days="$($bin_echo "scale=0 ; $var1 / 86400" | $bin_bc -l)"
-    remainder="$($bin_echo "scale=0 ; $var1 % 86400" | $bin_bc -l)"
-    hours="$($bin_echo "scale=0 ; $remainder / 3600" | $bin_bc -l)"
-    remainder="$($bin_echo "scale=0 ; $remainder % 3600" | $bin_bc -l)"
-    minutes="$($bin_echo "scale=0 ; $remainder / 60" | $bin_bc -l)"
-    seconds="$($bin_echo "scale=0 ; $remainder % 60" | $bin_bc -l)"
+    days="$(echo "scale=0 ; $var1 / 86400" | $bin_bc -l)"
+    remainder="$(echo "scale=0 ; $var1 % 86400" | $bin_bc -l)"
+    hours="$(echo "scale=0 ; $remainder / 3600" | $bin_bc -l)"
+    remainder="$(echo "scale=0 ; $remainder % 3600" | $bin_bc -l)"
+    minutes="$(echo "scale=0 ; $remainder / 60" | $bin_bc -l)"
+    seconds="$(echo "scale=0 ; $remainder % 60" | $bin_bc -l)"
 
     export "$var2"="$days days $hours hrs $minutes min $seconds sec"
 }
@@ -716,13 +716,13 @@ check_key_buffer_size ()
         cecho "No key reads?!" boldred
         cecho "Seriously look into using some indexes" red
         key_cache_miss_rate="0"
-        key_buffer_free="$($bin_echo "$key_blocks_unused * $key_cache_block_size / $key_buffer_size * 100" | $bin_bc -l)"
-        key_buffer_freeRND="$($bin_echo "scale=0 ; $key_buffer_free / 1" | $bin_bc -l)"
+        key_buffer_free="$(echo "$key_blocks_unused * $key_cache_block_size / $key_buffer_size * 100" | $bin_bc -l)"
+        key_buffer_freeRND="$(echo "scale=0 ; $key_buffer_free / 1" | $bin_bc -l)"
     else
         key_cache_miss_rate="$((key_read_requests / $key_reads))"
         if [ ! -z "$key_blocks_unused" ] ; then
-            key_buffer_free="$($bin_echo "$key_blocks_unused * $key_cache_block_size / $key_buffer_size * 100" | $bin_bc -l)"
-            key_buffer_freeRND="$($bin_echo "scale=0 ; $key_buffer_free / 1" | $bin_bc -l)"
+            key_buffer_free="$(echo "$key_blocks_unused * $key_cache_block_size / $key_buffer_size * 100" | $bin_bc -l)"
+            key_buffer_freeRND="$(echo "scale=0 ; $key_buffer_free / 1" | $bin_bc -l)"
         else
             key_buffer_free="Unknown"
             key_buffer_freeRND="75"
@@ -773,8 +773,8 @@ check_query_cache ()
         cecho "Perhaps you should set the query_cache_size" red
     else
         qcache_used_memory="$((query_cache_size - $qcache_free_memory))"
-        qcache_mem_fill_ratio="$($bin_echo "scale=2 ; $qcache_used_memory * 100 / $query_cache_size" | $bin_bc -l)"
-        qcache_mem_fill_ratioHR="$($bin_echo "scale=0 ; $qcache_mem_fill_ratio / 1" | $bin_bc -l)"
+        qcache_mem_fill_ratio="$(echo "scale=2 ; $qcache_used_memory * 100 / $query_cache_size" | $bin_bc -l)"
+        qcache_mem_fill_ratioHR="$(echo "scale=0 ; $qcache_mem_fill_ratio / 1" | $bin_bc -l)"
 
         cecho "Query cache is enabled" green
         human_readable "$query_cache_size" query_cache_sizeHR
@@ -787,8 +787,8 @@ check_query_cache ()
         human_readable "$query_cache_min_res_unit" query_cache_min_res_unitHR
         cecho "Current query_cache_min_res_unit = $query_cache_min_res_unitHR $unit"
         if [ $((qcache_free_blocks > 2)) -ne 0 ] && [ $((qcache_total_blocks > 0)) -ne 0 ] ; then
-            qcache_percent_fragmented="$($bin_echo "scale=2 ; $qcache_free_blocks * 100 / $qcache_total_blocks" | $bin_bc -l)"
-            qcache_percent_fragmentedHR="$($bin_echo "scale=0 ; $qcache_percent_fragmented / 1" | $bin_bc -l)"
+            qcache_percent_fragmented="$(echo "scale=2 ; $qcache_free_blocks * 100 / $qcache_total_blocks" | $bin_bc -l)"
+            qcache_percent_fragmentedHR="$(echo "scale=0 ; $qcache_percent_fragmented / 1" | $bin_bc -l)"
             if [ $((qcache_percent_fragmentedHR > 20)) -ne 0 ] ; then
                 cecho "Query Cache is $qcache_percent_fragmentedHR % fragmented" red
                 cecho "Run \"FLUSH QUERY CACHE\" periodically to defragment the query cache memory" red
@@ -956,7 +956,7 @@ check_open_files ()
     mysql_variable \'open_files_limit\' open_files_limit
 
     if [ -z "$open_files_limit" ] || [ $((open_files_limit == 0)) -ne 0 ] ; then
-        open_files_limit="$($bin_ulimit -n)"
+        open_files_limit="$(ulimit -n)"
         cant_override="1"
     else
         cant_override="0"
@@ -1240,8 +1240,8 @@ total_memory_used ()
         effective_tmp_table_size="$tmp_table_size"
     fi
 
-    per_thread_buffers="$($bin_echo "($read_buffer_size + $read_rnd_buffer_size + $sort_buffer_size + $thread_stack + $join_buffer_size + $binlog_cache_size) * $max_connections" | $bin_bc -l)"
-    per_thread_max_buffers="$($bin_echo "($read_buffer_size + $read_rnd_buffer_size + $sort_buffer_size + $thread_stack + $join_buffer_size + $binlog_cache_size) * $max_used_connections" | $bin_bc -l)"
+    per_thread_buffers="$(echo "($read_buffer_size + $read_rnd_buffer_size + $sort_buffer_size + $thread_stack + $join_buffer_size + $binlog_cache_size) * $max_connections" | $bin_bc -l)"
+    per_thread_max_buffers="$(echo "($read_buffer_size + $read_rnd_buffer_size + $sort_buffer_size + $thread_stack + $join_buffer_size + $binlog_cache_size) * $max_used_connections" | $bin_bc -l)"
 
     mysql_variable \'innodb_buffer_pool_size\' innodb_buffer_pool_size
     if [ -z "$innodb_buffer_pool_size" ] ; then
@@ -1268,12 +1268,12 @@ total_memory_used ()
         query_cache_size="0"
     fi
 
-    global_buffers="$($bin_echo "$innodb_buffer_pool_size + $innodb_additional_mem_pool_size + $innodb_log_buffer_size + $key_buffer_size + $query_cache_size" | $bin_bc -l)"
+    global_buffers="$(echo "$innodb_buffer_pool_size + $innodb_additional_mem_pool_size + $innodb_log_buffer_size + $key_buffer_size + $query_cache_size" | $bin_bc -l)"
 
-    max_memory="$($bin_echo "$global_buffers + $per_thread_max_buffers" | $bin_bc -l)"
-    total_memory="$($bin_echo "$global_buffers + $per_thread_buffers" | $bin_bc -l)"
+    max_memory="$(echo "$global_buffers + $per_thread_max_buffers" | $bin_bc -l)"
+    total_memory="$(echo "$global_buffers + $per_thread_buffers" | $bin_bc -l)"
 
-    pct_of_sys_mem="$($bin_echo "scale=0 ; $total_memory * 100 / $physical_memory" | $bin_bc -l)"
+    pct_of_sys_mem="$(echo "scale=0 ; $total_memory * 100 / $physical_memory" | $bin_bc -l)"
 
     if [ $((pct_of_sys_mem > 90)) -ne 0 ] ; then
         txt_color="boldred"
