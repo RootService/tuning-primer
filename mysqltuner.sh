@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.1.0-devel"
+VERSION="3.2.0-devel"
 
 usage() {
   cat <<USAGE
@@ -418,6 +418,9 @@ CONN_ERRORS_PEERADDR=$(kv_get "$STATUS_TSV" Connection_errors_peer_address)
 CONN_ERRORS_SELECT=$(kv_get "$STATUS_TSV" Connection_errors_select)
 CONN_ERRORS_TCPWRAP=$(kv_get "$STATUS_TSV" Connection_errors_tcpwrap)
 
+BINLOG_CACHE_USE=$(kv_get "$STATUS_TSV" Binlog_cache_use)
+BINLOG_CACHE_DISK_USE=$(kv_get "$STATUS_TSV" Binlog_cache_disk_use)
+
 OPEN_TABLES=$(kv_get "$STATUS_TSV" Open_tables)
 
 SLOW_QUERY_LOG=$(kv_get "$VARS_TSV" slow_query_log)
@@ -529,6 +532,7 @@ PORT_VAR=$(kv_get "$VARS_TSV" port)
 LOG_BIN=$(kv_get "$VARS_TSV" log_bin)
 BINLOG_FORMAT=$(kv_get "$VARS_TSV" binlog_format)
 SYNC_BINLOG=$(kv_get "$VARS_TSV" sync_binlog)
+BINLOG_CACHE_SIZE=$(kv_get "$VARS_TSV" binlog_cache_size)
 MAX_CONNECT_ERRORS=$(kv_get "$VARS_TSV" max_connect_errors)
 
 # Security-related variables
@@ -625,8 +629,20 @@ tlw=$(num "$TABLE_LOCKS_WAITED")
 tlt=$((tli + tlw))
 if [ "$tlt" -gt 0 ]; then
   TABLE_LOCKS_WAITED_PCT=$(pct "$tlw" "$tlt")
+  TABLE_LOCKS_IMMEDIATE_PCT=$((100 - $(num "$TABLE_LOCKS_WAITED_PCT")))
 else
   TABLE_LOCKS_WAITED_PCT=""
+  TABLE_LOCKS_IMMEDIATE_PCT=""
+fi
+
+# Binlog cache pct (best-effort)
+bcu=$(num "$BINLOG_CACHE_USE")
+bcdu=$(num "$BINLOG_CACHE_DISK_USE")
+if [ "$bcu" -gt 0 ]; then
+  # pct memory = (use - disk_use) / use
+  BINLOG_CACHE_PCT=$(pct "$((bcu - bcdu))" "$bcu")
+else
+  BINLOG_CACHE_PCT=""
 fi
 
 # Query cache fragmentation percent (best-effort)
@@ -739,6 +755,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg table_locks_immediate "$TABLE_LOCKS_IMMEDIATE" \
     --arg table_locks_waited "$TABLE_LOCKS_WAITED" \
     --arg table_locks_waited_pct "$TABLE_LOCKS_WAITED_PCT" \
+    --arg table_locks_immediate_pct "${TABLE_LOCKS_IMMEDIATE_PCT:-}" \
     --arg slow_query_log "$SLOW_QUERY_LOG" \
     --arg slow_queries "$SLOW_QUERIES" \
     --arg innodb_buffer_pool_size "$INNODB_BP_SIZE" \
@@ -768,6 +785,10 @@ if [ "$JSON" -eq 1 ]; then
     --arg log_bin "$LOG_BIN" \
     --arg binlog_format "$BINLOG_FORMAT" \
     --arg sync_binlog "$SYNC_BINLOG" \
+    --arg binlog_cache_size "$BINLOG_CACHE_SIZE" \
+    --arg binlog_cache_use "$BINLOG_CACHE_USE" \
+    --arg binlog_cache_disk_use "$BINLOG_CACHE_DISK_USE" \
+    --arg binlog_cache_pct "${BINLOG_CACHE_PCT:-}" \
     --arg max_connect_errors "$MAX_CONNECT_ERRORS" \
     --arg skip_name_resolve "$SKIP_NAME_RESOLVE" \
     --arg local_infile "$LOCAL_INFILE" \
@@ -880,6 +901,7 @@ if [ "$JSON" -eq 1 ]; then
       table_locks_immediate:$table_locks_immediate,
       table_locks_waited:$table_locks_waited,
       table_locks_waited_pct:$table_locks_waited_pct,
+      table_locks_immediate_pct:$table_locks_immediate_pct,
       slow_query_log:$slow_query_log,
       slow_queries:$slow_queries,
       innodb_buffer_pool_size:$innodb_buffer_pool_size,
@@ -909,6 +931,10 @@ if [ "$JSON" -eq 1 ]; then
       log_bin:$log_bin,
       binlog_format:$binlog_format,
       sync_binlog:$sync_binlog,
+      binlog_cache_size:$binlog_cache_size,
+      binlog_cache_use:$binlog_cache_use,
+      binlog_cache_disk_use:$binlog_cache_disk_use,
+      binlog_cache_pct:$binlog_cache_pct,
       max_connect_errors:$max_connect_errors,
       skip_name_resolve:$skip_name_resolve,
       local_infile:$local_infile,
@@ -1173,6 +1199,10 @@ info "Joins without indexes:  $JOINS_WITHOUT_INDEXES (~${JOINS_WO_IDX_PER_DAY}/d
 section "Table Locks"
 info "Table_locks_immediate: $TABLE_LOCKS_IMMEDIATE"
 info "Table_locks_waited:    $TABLE_LOCKS_WAITED"
+if [ -n "${TABLE_LOCKS_IMMEDIATE_PCT:-}" ]; then
+  info "Table locks immediate: ${TABLE_LOCKS_IMMEDIATE_PCT}%"
+  [ "$(num "$TABLE_LOCKS_IMMEDIATE_PCT")" -lt 95 ] && warn "Table locks acquired immediately <95% (${TABLE_LOCKS_IMMEDIATE_PCT}%)" || true
+fi
 if [ -n "${TABLE_LOCKS_WAITED_PCT:-}" ]; then
   info "Table locks waited:    ${TABLE_LOCKS_WAITED_PCT}%"
   [ "$(num "$TABLE_LOCKS_WAITED_PCT")" -ge 1 ] && warn "Table_locks_waited > 0 (contention detected)" || true
@@ -1322,6 +1352,13 @@ section "Binary Log"
 [ -n "$LOG_BIN" ] && info "log_bin: $LOG_BIN"
 [ -n "$BINLOG_FORMAT" ] && info "binlog_format: $BINLOG_FORMAT"
 [ -n "$SYNC_BINLOG" ] && info "sync_binlog: $SYNC_BINLOG"
+[ -n "$BINLOG_CACHE_SIZE" ] && info "binlog_cache_size: $(bytes_h "$BINLOG_CACHE_SIZE")"
+[ -n "$BINLOG_CACHE_USE" ] && info "Binlog_cache_use: $BINLOG_CACHE_USE"
+[ -n "$BINLOG_CACHE_DISK_USE" ] && info "Binlog_cache_disk_use: $BINLOG_CACHE_DISK_USE"
+if [ -n "${BINLOG_CACHE_PCT:-}" ] && [ "$(num "$BINLOG_CACHE_USE")" -gt 0 ]; then
+  info "Binlog cache memory access: ${BINLOG_CACHE_PCT}%"
+  [ "$(num "$BINLOG_CACHE_PCT")" -lt 90 ] && warn "Low binlog cache memory access (${BINLOG_CACHE_PCT}%) - consider increasing binlog_cache_size" || true
+fi
 
 if [ "${LOG_BIN:-}" = "ON" ] && [ "${SYNC_BINLOG:-}" != "" ]; then
   sb=$(num "$SYNC_BINLOG")
