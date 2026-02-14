@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.30.0-devel"
+VERSION="3.31.0-devel"
 
 usage() {
   cat <<USAGE
@@ -549,6 +549,9 @@ FK_CASCADE_COUNT=$(printf '%s' "$FK_CASCADE_JSON" | jq -r 'length')
 EMPTY_SCHEMAS_JSON=$(mysql_query_silent "SELECT TABLE_SCHEMA, SUM(CASE WHEN TABLE_TYPE='BASE TABLE' THEN 1 ELSE 0 END) AS base_tables, SUM(CASE WHEN TABLE_TYPE='VIEW' THEN 1 ELSE 0 END) AS views FROM information_schema.tables WHERE TABLE_SCHEMA NOT IN ('sys','mysql','performance_schema','information_schema') GROUP BY TABLE_SCHEMA HAVING SUM(CASE WHEN TABLE_TYPE='BASE TABLE' THEN 1 ELSE 0 END) = 0;" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], base_tables:(.[1]|tonumber), views:(.[2]|tonumber)}]')
 EMPTY_SCHEMAS_COUNT=$(printf '%s' "$EMPTY_SCHEMAS_JSON" | jq -r 'length')
 
+# 9) nullable columns count (datatype optimization, best-effort)
+NULLABLE_COLS_COUNT=$(mysql_query_silent "SELECT COUNT(*) FROM information_schema.columns WHERE is_nullable='YES' AND table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" | head -n 1 | tr -d '\r')
+
 # MyISAM / key buffer metrics
 KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
 KEY_READS=$(kv_get "$STATUS_TSV" Key_reads)
@@ -1025,6 +1028,7 @@ if [ "$JSON" -eq 1 ]; then
     --argjson fk_cascade "$FK_CASCADE_JSON" \
     --arg empty_schemas_count "$EMPTY_SCHEMAS_COUNT" \
     --argjson empty_schemas "$EMPTY_SCHEMAS_JSON" \
+    --arg nullable_cols_count "$NULLABLE_COLS_COUNT" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1225,6 +1229,7 @@ if [ "$JSON" -eq 1 ]; then
       fk_cascade:$fk_cascade,
       empty_schemas_count:$empty_schemas_count,
       empty_schemas:$empty_schemas,
+      nullable_cols_count:$nullable_cols_count,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1378,6 +1383,9 @@ info "Empty or view-only schemas: $EMPTY_SCHEMAS_COUNT"
 if [ "$(num "$EMPTY_SCHEMAS_COUNT")" -gt 0 ]; then
   printf '%s' "$EMPTY_SCHEMAS_JSON" | jq -r '.[:10][] | if (.base_tables==0 and .views==0) then "[INFO] Schema " + .schema + " is empty (no tables or views)" else "[INFO] Schema " + .schema + " contains only views (" + (.views|tostring) + " views)" end'
 fi
+
+info "Columns with NULL enabled: $NULLABLE_COLS_COUNT"
+[ "$(num "$NULLABLE_COLS_COUNT")" -gt 20 ] && warn "There are $NULLABLE_COLS_COUNT columns with NULL enabled. Consider using NOT NULL where possible." || true
 
 section "Replication"
 info "Galera Synchronous replication: $HAVE_GALERA"
