@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.60.0-devel"
+VERSION="3.61.0-devel"
 
 usage() {
   cat <<USAGE
@@ -738,7 +738,7 @@ TABLE_METRICS_JSON='[]'
 TABLE_METRICS_COUNT=0
 if [ "$TBSTAT" -eq 1 ] || [ -n "$SCHEMA_DIR" ]; then
   # table index listing (1 row per index)
-  TABLE_IDX_RAW_JSON=$(mysql_query_silent "SELECT t.table_schema, t.table_name, t.engine, s.index_name, GROUP_CONCAT(s.column_name ORDER BY s.seq_in_index) AS cols, s.index_type, s.non_unique FROM information_schema.tables t LEFT JOIN information_schema.statistics s ON t.table_schema=s.table_schema AND t.table_name=s.table_name WHERE t.table_type='BASE TABLE' AND t.table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY t.table_schema, t.table_name, t.engine, s.index_name, s.index_type, s.non_unique ORDER BY t.table_schema, t.table_name, s.index_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2], index:.[3], cols:.[4], index_type:.[5], non_unique:.[6]}]')
+  TABLE_IDX_RAW_JSON=$(mysql_query_silent "SELECT t.table_schema, t.table_name, t.engine, s.index_name, GROUP_CONCAT(CASE WHEN s.sub_part IS NULL THEN s.column_name ELSE CONCAT(s.column_name,'(',s.sub_part,')') END ORDER BY s.seq_in_index) AS cols, s.index_type, s.non_unique FROM information_schema.tables t LEFT JOIN information_schema.statistics s ON t.table_schema=s.table_schema AND t.table_name=s.table_name WHERE t.table_type='BASE TABLE' AND t.table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY t.table_schema, t.table_name, t.engine, s.index_name, s.index_type, s.non_unique ORDER BY t.table_schema, t.table_name, s.index_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2], index:.[3], cols:.[4], index_type:.[5], non_unique:.[6]}]')
 
   # table stats summary (1 row per table)
   TABLE_STAT_RAW_JSON=$(mysql_query_silent "SELECT table_schema, table_name, engine, row_format, IFNULL(table_rows,0), IFNULL(avg_row_length,0), IFNULL(data_length,0), IFNULL(index_length,0), IFNULL(data_length+index_length,0) AS total_bytes, CAST(IFNULL(data_free,0) AS SIGNED) AS data_free_bytes, IFNULL(table_collation,''), IFNULL(create_time,''), IFNULL(update_time,'') FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) ORDER BY table_schema, table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2], row_format:.[3], rows:(.[4]|tonumber), avg_row_length:(.[5]|tonumber), data_bytes:(.[6]|tonumber), index_bytes:(.[7]|tonumber), total_bytes:(.[8]|tonumber), data_free_bytes:(.[9]|tonumber), collation:.[10], create_time:.[11], update_time:.[12]}]')
@@ -763,7 +763,7 @@ if [ "$TBSTAT" -eq 1 ] || [ -n "$SCHEMA_DIR" ]; then
 fi
 
 # Index inventory (best-effort)
-INDEXES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, index_name, GROUP_CONCAT(column_name ORDER BY seq_in_index) AS cols, index_type, non_unique FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema, table_name, index_name, index_type, non_unique ORDER BY table_schema, table_name, index_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], index:.[2], columns:(.[3]|split(",")), index_type:.[4], non_unique:(.[5]|tonumber)}]')
+INDEXES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, index_name, GROUP_CONCAT(CASE WHEN sub_part IS NULL THEN column_name ELSE CONCAT(column_name,'(',sub_part,')') END ORDER BY seq_in_index) AS cols, index_type, non_unique FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema, table_name, index_name, index_type, non_unique ORDER BY table_schema, table_name, index_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], index:.[2], columns:(.[3]|split(",")), index_type:.[4], non_unique:(.[5]|tonumber)}]')
 INDEXES_COUNT=$(printf '%s' "$INDEXES_JSON" | jq -r 'length')
 
 TABLES_NO_INDEX_JSON=$(mysql_query_silent "SELECT t.table_schema, t.table_name FROM information_schema.tables t WHERE t.table_type='BASE TABLE' AND t.table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) AND NOT EXISTS (SELECT 1 FROM information_schema.statistics s WHERE s.table_schema=t.table_schema AND s.table_name=t.table_name);" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1]}]')
