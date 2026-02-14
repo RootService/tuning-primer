@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="0.8.0-devel"
+VERSION="0.9.0-devel"
 
 usage() {
   cat <<USAGE
@@ -131,7 +131,6 @@ bytes_h() {
 }
 
 mem_total_bytes() {
-  # best-effort: Linux /proc/meminfo
   if [ -r /proc/meminfo ]; then
     awk '/^MemTotal:/{printf "%d", $2*1024; exit}' /proc/meminfo
     return
@@ -204,6 +203,11 @@ JOIN_BUFFER_SIZE=$(kv_get "$VARS_TSV" join_buffer_size)
 THREAD_STACK=$(kv_get "$VARS_TSV" thread_stack)
 QCACHE_SIZE=$(kv_get "$VARS_TSV" query_cache_size)
 
+# Network/security exposure
+BIND_ADDRESS=$(kv_get "$VARS_TSV" bind_address)
+SKIP_NETWORKING=$(kv_get "$VARS_TSV" skip_networking)
+PORT_VAR=$(kv_get "$VARS_TSV" port)
+
 # Security-related variables
 SKIP_NAME_RESOLVE=$(kv_get "$VARS_TSV" skip_name_resolve)
 LOCAL_INFILE=$(kv_get "$VARS_TSV" local_infile)
@@ -250,6 +254,9 @@ if [ "$JSON" -eq 1 ]; then
     --arg innodb_buffer_pool_size "$INNODB_BP_SIZE" \
     --arg innodb_buffer_pool_read_requests "$INNODB_BP_READ_REQ" \
     --arg innodb_buffer_pool_reads "$INNODB_BP_READS" \
+    --arg bind_address "$BIND_ADDRESS" \
+    --arg skip_networking "$SKIP_NETWORKING" \
+    --arg port "$PORT_VAR" \
     --arg skip_name_resolve "$SKIP_NAME_RESOLVE" \
     --arg local_infile "$LOCAL_INFILE" \
     --arg require_secure_transport "$REQUIRE_SECURE_TRANSPORT" \
@@ -280,6 +287,9 @@ if [ "$JSON" -eq 1 ]; then
       innodb_buffer_pool_size:$innodb_buffer_pool_size,
       innodb_buffer_pool_read_requests:$innodb_buffer_pool_read_requests,
       innodb_buffer_pool_reads:$innodb_buffer_pool_reads,
+      bind_address:$bind_address,
+      skip_networking:$skip_networking,
+      port:$port,
       skip_name_resolve:$skip_name_resolve,
       local_infile:$local_infile,
       require_secure_transport:$require_secure_transport,
@@ -328,13 +338,9 @@ info "Max memory estimate:     $(bytes_h "$MAX_MEM") (global + per-thread*max_co
 if [ "$(num "$RAM_TOTAL")" -gt 0 ]; then
   info "System RAM (best-effort): $(bytes_h "$RAM_TOTAL")"
   mempct=$(pct "$MAX_MEM" "$RAM_TOTAL")
-  if [ "$mempct" -ge 85 ]; then
-    warn "Max memory estimate is high (${mempct}% of RAM). Consider lowering per-thread buffers/max_connections or increasing RAM."
-  else
-    ok "Max memory estimate: ${mempct}% of RAM"
-  fi
+  [ "$mempct" -ge 85 ] && warn "Max memory estimate high (${mempct}% of RAM)" || ok "Max memory estimate: ${mempct}% of RAM"
 else
-  info "System RAM unknown (no /proc/meminfo); skipping RAM comparison"
+  info "System RAM unknown; skipping RAM comparison"
 fi
 
 section "Slow Query Log"
@@ -375,6 +381,23 @@ section "Packet Size"
 info "max_allowed_packet: $(bytes_h "$MAX_ALLOWED_PACKET")"
 [ "$(num "$MAX_ALLOWED_PACKET")" -lt 16777216 ] && warn "max_allowed_packet below 16MiB" || ok "max_allowed_packet looks OK"
 
+section "Network"
+[ -n "$PORT_VAR" ] && info "port: $PORT_VAR"
+[ -n "$BIND_ADDRESS" ] && info "bind_address: $BIND_ADDRESS"
+[ -n "$SKIP_NETWORKING" ] && info "skip_networking: $SKIP_NETWORKING"
+
+if [ "$SKIP_NETWORKING" = "ON" ]; then
+  ok "skip_networking is ON (TCP disabled)"
+else
+  case "$BIND_ADDRESS" in
+    0.0.0.0|::|*)
+      if [ "$BIND_ADDRESS" = "0.0.0.0" ] || [ "$BIND_ADDRESS" = "::" ]; then
+        warn "bind_address is $BIND_ADDRESS (listens on all interfaces)"
+      fi
+      ;;
+  esac
+fi
+
 section "Security (basic)"
 [ -n "$SKIP_NAME_RESOLVE" ] && info "skip_name_resolve: $SKIP_NAME_RESOLVE"
 [ -n "$LOCAL_INFILE" ] && info "local_infile: $LOCAL_INFILE"
@@ -387,31 +410,31 @@ section "Security (basic)"
 
 section "Users (best-effort)"
 if [ -n "$USER_ROWS" ]; then
-  info "mysql.user is readable; checking common issues (col4=$USER_COL4)"
+  info "mysql.user readable; checking common issues (col4=$USER_COL4)"
 
   if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($1=="" && $2!=""){exit 0} END{exit 1}'; then
-    warn "Anonymous user accounts exist in mysql.user"
+    warn "Anonymous user accounts exist"
   else
-    ok "No anonymous mysql.user rows detected"
+    ok "No anonymous user rows detected"
   fi
 
   if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($2=="%"){exit 0} END{exit 1}'; then
-    warn "Accounts with host=% exist in mysql.user (review access)"
+    warn "Accounts with host=% exist"
   else
-    ok "No host=% mysql.user rows detected"
+    ok "No host=% rows detected"
   fi
 
   if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($1=="root" && $2=="%"){exit 0} END{exit 1}'; then
-    warn "root@% exists (strongly consider restricting)"
+    warn "root@% exists"
   fi
 
   if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($1!="" && $4==""){exit 0} END{exit 1}'; then
-    warn "User rows with empty $USER_COL4 detected (possible empty passwords)"
+    warn "Empty $USER_COL4 detected (possible empty passwords)"
   else
-    ok "No empty $USER_COL4 detected (best-effort)"
+    ok "No empty $USER_COL4 detected"
   fi
 else
-  info "mysql.user not readable with current credentials (skipping user checks)"
+  info "mysql.user not readable; skipping user checks"
 fi
 
 ok "Collected: SHOW GLOBAL VARIABLES/STATUS"
