@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.28.0-devel"
+VERSION="3.29.0-devel"
 
 usage() {
   cat <<USAGE
@@ -537,6 +537,14 @@ FK_MISMATCHES_COUNT=$(printf '%s' "$FK_MISMATCHES_JSON" | jq -r 'length')
 NON_INNODB_TABLES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, engine FROM information_schema.tables t WHERE t.engine <> 'InnoDB' AND t.table_type='BASE TABLE' AND t.table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2]}]')
 NON_INNODB_TABLES_COUNT=$(printf '%s' "$NON_INNODB_TABLES_JSON" | jq -r 'length')
 
+# 6) unconstrained *_id columns (best-effort)
+UNCONSTRAINED_ID_JSON=$(mysql_query_silent "SELECT c.table_schema, c.table_name, c.column_name FROM information_schema.columns c LEFT JOIN information_schema.key_column_usage k ON c.table_schema = k.table_schema AND c.table_name = k.table_name AND c.column_name = k.column_name AND k.referenced_table_name IS NOT NULL JOIN information_schema.tables t ON c.table_schema=t.table_schema AND c.table_name=t.table_name WHERE c.column_name LIKE '%\\_id' ESCAPE '\\' AND k.column_name IS NULL AND t.table_type='BASE TABLE' AND c.table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2]}]')
+UNCONSTRAINED_ID_COUNT=$(printf '%s' "$UNCONSTRAINED_ID_JSON" | jq -r 'length')
+
+# 7) FK delete rule CASCADE (best-effort)
+FK_CASCADE_JSON=$(mysql_query_silent "SELECT rc.constraint_schema, rc.table_name, k.column_name, rc.referenced_table_name, k.referenced_column_name, rc.delete_rule FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage k ON rc.constraint_schema = k.constraint_schema AND rc.constraint_name = k.constraint_name WHERE rc.constraint_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND rc.delete_rule='CASCADE';" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], ref_table:.[3], ref_column:.[4], delete_rule:.[5]}]')
+FK_CASCADE_COUNT=$(printf '%s' "$FK_CASCADE_JSON" | jq -r 'length')
+
 # MyISAM / key buffer metrics
 KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
 KEY_READS=$(kv_get "$STATUS_TSV" Key_reads)
@@ -1007,6 +1015,10 @@ if [ "$JSON" -eq 1 ]; then
     --argjson fk_mismatches "$FK_MISMATCHES_JSON" \
     --arg non_innodb_tables_count "$NON_INNODB_TABLES_COUNT" \
     --argjson non_innodb_tables "$NON_INNODB_TABLES_JSON" \
+    --arg unconstrained_id_count "$UNCONSTRAINED_ID_COUNT" \
+    --argjson unconstrained_id "$UNCONSTRAINED_ID_JSON" \
+    --arg fk_cascade_count "$FK_CASCADE_COUNT" \
+    --argjson fk_cascade "$FK_CASCADE_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1201,6 +1213,10 @@ if [ "$JSON" -eq 1 ]; then
       fk_mismatches:$fk_mismatches,
       non_innodb_tables_count:$non_innodb_tables_count,
       non_innodb_tables:$non_innodb_tables,
+      unconstrained_id_count:$unconstrained_id_count,
+      unconstrained_id:$unconstrained_id,
+      fk_cascade_count:$fk_cascade_count,
+      fk_cascade:$fk_cascade,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1338,6 +1354,16 @@ fi
 info "Non-InnoDB base tables: $NON_INNODB_TABLES_COUNT"
 if [ "$(num "$NON_INNODB_TABLES_COUNT")" -gt 0 ]; then
   printf '%s' "$NON_INNODB_TABLES_JSON" | jq -r '.[:10][] | "[WARN] Non-InnoDB: " + .schema + "." + .table + " engine=" + .engine'
+fi
+
+info "Unconstrained *_id columns: $UNCONSTRAINED_ID_COUNT"
+if [ "$(num "$UNCONSTRAINED_ID_COUNT")" -gt 0 ]; then
+  printf '%s' "$UNCONSTRAINED_ID_JSON" | jq -r '.[:10][] | "[WARN] Unconstrained _id: " + .schema + "." + .table + "." + .column'
+fi
+
+info "FKs with ON DELETE CASCADE: $FK_CASCADE_COUNT"
+if [ "$(num "$FK_CASCADE_COUNT")" -gt 0 ]; then
+  printf '%s' "$FK_CASCADE_JSON" | jq -r '.[:10][] | "[INFO] ON DELETE CASCADE: " + .schema + "." + .table + "." + .column + " -> " + .ref_table + "." + .ref_column'
 fi
 
 section "Replication"
