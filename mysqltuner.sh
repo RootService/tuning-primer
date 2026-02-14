@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.59.0-devel"
+VERSION="3.60.0-devel"
 
 usage() {
   cat <<USAGE
@@ -905,6 +905,20 @@ if [ -n "$SCHEMA_DIR" ]; then
         tcreate=$(printf '%s' "$tmeta" | awk -F"\t" '{print $2}')
         [ -n "$tcomment" ] && [ "$tcomment" != "" ] && printf '%s\n' "- **Comment**: $tcomment" || true
         [ -n "$tcreate" ] && [ "$tcreate" != "" ] && printf '%s\n\n' "- **Create options**: $tcreate" || true
+
+        # Partitioning info (best-effort)
+        pinfo=$(mysql_query_silent "SELECT partition_method, partition_expression FROM information_schema.partitions WHERE table_schema='$db' AND table_name='$tb' AND partition_name IS NOT NULL LIMIT 1;" 2>/dev/null | head -n 1)
+        if [ -n "$pinfo" ]; then
+          pm=$(printf '%s' "$pinfo" | awk -F"\t" '{print $1}')
+          pe=$(printf '%s' "$pinfo" | awk -F"\t" '{print $2}')
+          [ -n "$pm" ] && printf '%s\n' "- **Partitioning**: $pm" || true
+          [ -n "$pe" ] && printf '%s\n\n' "- **Partition expr**: $pe" || true
+
+          printf '#### Partitions\n\n'
+          mysql_query_silent "SELECT partition_name, partition_description, IFNULL(table_rows,0), IFNULL(data_length,0), IFNULL(index_length,0) FROM information_schema.partitions WHERE table_schema='$db' AND table_name='$tb' AND partition_name IS NOT NULL ORDER BY partition_ordinal_position;" 2>/dev/null | \
+            jq -Rnr '[inputs | select(length>0) | split("\t") | {name:.[0], desc:.[1], rows:(.[2]|tonumber), data:(.[3]|tonumber), idx:(.[4]|tonumber)}] | .[] | "- " + .name + ": desc=" + .desc + " rows=" + (.rows|tostring) + " data=" + (.data|tostring) + " index=" + (.idx|tostring)'
+          printf '\n'
+        fi
 
         printf '#### Indexes\n\n'
         printf '%s' "$t" | jq -r '.indexes[]? | "- **" + .name + "**: " + (.columns|join(",")) + " (" + (.type//"") + ")" + (if (.non_unique|tonumber)==0 then " UNIQUE" else "" end)'
