@@ -2,9 +2,10 @@
 # mysqltuner.sh - POSIX shell port (derived from MySQLTuner-perl)
 # License: GPLv3 (see LICENSE.GPLv3)
 
+# Keep strict mode, but avoid set -e (we want controlled error handling)
 set -u
 
-VERSION="0.0.0-devel"
+VERSION="0.1.0-devel"
 
 usage() {
   cat <<USAGE
@@ -30,7 +31,8 @@ Misc:
   --version
 
 Notes:
-  This is a work-in-progress port. Only scaffolding is present in this commit.
+  This is an in-progress POSIX shell port. The core engine (connection +
+  variable/status collection) is implemented; feature parity checks follow.
 USAGE
 }
 
@@ -39,7 +41,36 @@ die() {
   exit 1
 }
 
-# minimal argument parser (POSIX-compatible)
+note() {
+  # log to stderr unless silent
+  if [ "${SILENT:-0}" -eq 0 ]; then
+    echo "$*" 1>&2
+  fi
+}
+
+need_cmd() {
+  # $1: command
+  command -v "$1" >/dev/null 2>&1 || die "$1 not found in PATH"
+}
+
+mktemp_dir() {
+  # POSIX-ish mktemp fallback
+  if command -v mktemp >/dev/null 2>&1; then
+    mktemp -d 2>/dev/null || mktemp -d -t mysqltuner 2>/dev/null
+    return
+  fi
+  d="/tmp/mysqltuner.$$"
+  (umask 077 && mkdir "$d") || return 1
+  echo "$d"
+}
+
+cleanup() {
+  if [ -n "${WORKDIR:-}" ] && [ -d "${WORKDIR:-}" ]; then
+    rm -rf "$WORKDIR" >/dev/null 2>&1 || true
+  fi
+}
+
+# ---- Argument parsing (POSIX-compatible) -----------------------------------
 HOST=""
 PORT=""
 SOCKET=""
@@ -68,10 +99,14 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# Check runtime deps
-command -v mysql >/dev/null 2>&1 || die "mysql client not found in PATH"
+# ---- Runtime deps ----------------------------------------------------------
+need_cmd mysql
+need_cmd awk
+need_cmd sed
+need_cmd tr
+need_cmd head
 
-# Build mysql command
+# ---- MySQL command builder -------------------------------------------------
 MYSQL_CMD="mysql"
 MYSQL_ARGS="--batch --raw --skip-column-names"
 
@@ -98,17 +133,79 @@ fi
 mysql_query() {
   # $1: SQL
   # shellcheck disable=SC2086
-  echo "$1" | $MYSQL_CMD $MYSQL_ARGS 2>/dev/null
+  echo "$1" | $MYSQL_CMD $MYSQL_ARGS
 }
 
-# Placeholder: will be replaced with full check pipeline
+mysql_query_silent() {
+  # $1: SQL
+  mysql_query "$1" 2>/dev/null
+}
+
+# ---- KV helpers ------------------------------------------------------------
+kv_get() {
+  # $1: file (tab-separated key \t value)
+  # $2: key
+  awk -F"\t" -v k="$2" '(==k){sub(/^[^\t]*\t/, ""); print; exit}' "$1"
+}
+
+kv_dump_file() {
+  # $1: SQL that returns 2 columns (key, value)
+  # $2: output file
+  mysql_query_silent "$1" | awk 'NF>=2{print "\t"}' >"$2"
+}
+
+# ---- Core collection -------------------------------------------------------
+WORKDIR="$(mktemp_dir)" || die "unable to create temp dir"
+trap cleanup EXIT HUP INT TERM
+
+VARS_TSV="$WORKDIR/variables.tsv"
+STATUS_TSV="$WORKDIR/status.tsv"
+
 # Ensure connection works
-if ! mysql_query "SELECT 1;" >/dev/null 2>&1; then
+if ! mysql_query_silent "SELECT 1;" >/dev/null 2>&1; then
   die "unable to connect (check credentials/host/socket)"
 fi
 
+# Collect key/value tables
+kv_dump_file "SHOW GLOBAL VARIABLES" "$VARS_TSV"
+kv_dump_file "SHOW GLOBAL STATUS" "$STATUS_TSV"
+
+# Basic server identity
+SERVER_VERSION="$(mysql_query_silent "SELECT VERSION();" | head -n 1 | tr -d '\r')"
+SERVER_COMMENT="$(kv_get "$VARS_TSV" version_comment | tr -d '\r')"
+SERVER_FLAVOR="mysql"
+case "$SERVER_VERSION" in
+  *MariaDB*) SERVER_FLAVOR="mariadb" ;;
+esac
+
+UPTIME="$(kv_get "$STATUS_TSV" Uptime | tr -d '\r')"
+
+# ---- Output ---------------------------------------------------------------
+if [ "$JSON" -eq 1 ]; then
+  # minimal JSON for now (avoid complex escaping until we add a proper encoder)
+  echo "{";
+  echo "  \"version\": \"$SERVER_VERSION\",";
+  echo "  \"flavor\": \"$SERVER_FLAVOR\",";
+  echo "  \"version_comment\": \"$SERVER_COMMENT\",";
+  echo "  \"uptime\": \"$UPTIME\"";
+  echo "}";
+  exit 0
+fi
+
 if [ "$SILENT" -eq 0 ]; then
-  echo "MySQLTuner POSIX port: connected successfully. (WIP)"
+  echo "MySQLTuner POSIX port (WIP)"
+  echo "--------------------------------"
+  echo "Server version:  $SERVER_VERSION"
+  echo "Server flavor:   $SERVER_FLAVOR"
+  if [ -n "$SERVER_COMMENT" ]; then
+    echo "Version comment: $SERVER_COMMENT"
+  fi
+  if [ -n "$UPTIME" ]; then
+    echo "Uptime (s):      $UPTIME"
+  fi
+  echo
+  echo "Collected: SHOW GLOBAL VARIABLES/STATUS"
+  echo "Next: implement checks/recommendations for feature parity."
 fi
 
 exit 0
