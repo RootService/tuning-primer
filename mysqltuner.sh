@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.48.2-devel"
+VERSION="3.48.3-devel"
 
 usage() {
   cat <<USAGE
@@ -909,10 +909,24 @@ fi
 PK_NAMING_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(type=="object") | select(.column != "id" and .column != (.table + "_id")) | {schema, table, column}]')
 PK_NAMING_ISSUES_COUNT=$(printf '%s' "$PK_NAMING_ISSUES_JSON" | jq -r 'length')
 
-UUID_PK_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(type=="object") | select((.column|test("uuid";"i"))) | select((.data_type|test("binary";"i"))|not or ((.column_type//"")|test("16"))|not) | {schema, table, column, data_type, column_type}]')
+UUID_PK_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[]
+  | select(type=="object")
+  | select((.column|test("uuid";"i")))
+  | select( ((.data_type|test("binary";"i"))|not) or (((.column_type//"" )|test("16"))|not) )
+  | {schema, table, column, data_type, column_type}
+]')
 UUID_PK_ISSUES_COUNT=$(printf '%s' "$UUID_PK_ISSUES_JSON" | jq -r 'length')
 
-PK_SURROGATE_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(type=="object") | select((.column|test("uuid";"i"))|not) | select((.data_type|test("int";"i"))|not or ((.column_type//"")|test("unsigned";"i"))|not or ((.column_type//"")|test("auto_increment";"i"))|not) | {schema, table, column, data_type, column_type}]')
+PK_SURROGATE_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[]
+  | select(type=="object")
+  | select((.column|test("uuid";"i"))|not)
+  | select(
+      ((.data_type|test("int";"i"))|not)
+      or (((.column_type//"")|test("unsigned";"i"))|not)
+      or (((.column_type//"")|test("auto_increment";"i"))|not)
+    )
+  | {schema, table, column, data_type, column_type}
+]')
 PK_SURROGATE_ISSUES_COUNT=$(printf '%s' "$PK_SURROGATE_ISSUES_JSON" | jq -r 'length')
 
 # MyISAM / key buffer metrics
