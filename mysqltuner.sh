@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.52.0-devel"
+VERSION="3.53.0-devel"
 
 usage() {
   cat <<USAGE
@@ -756,6 +756,16 @@ TABLES_NO_INDEX_COUNT=$(printf '%s' "$TABLES_NO_INDEX_JSON" | jq -r 'length')
 DUPLICATE_INDEXES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, GROUP_CONCAT(index_name ORDER BY index_name) AS indexes, GROUP_CONCAT(column_name ORDER BY seq_in_index) AS cols, index_type, non_unique, COUNT(*) AS idx_count FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema, table_name, cols, index_type, non_unique HAVING COUNT(DISTINCT index_name) > 1;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], indexes:(.[2]|split(",")), columns:(.[3]|split(",")), index_type:.[4], non_unique:(.[5]|tonumber), count:(.[6]|tonumber)}]')
 DUPLICATE_INDEXES_COUNT=$(printf '%s' "$DUPLICATE_INDEXES_JSON" | jq -r 'length')
 
+# Same columns but different uniqueness (non-unique index redundant if unique exists)
+SAME_COLS_DIFF_UNIQ_JSON=$(printf '%s' "$INDEXES_JSON" | jq -c '
+  group_by(.schema,.table,.columns,.index_type)
+  | map(select((map(.non_unique)|unique|length) > 1))
+  | map({schema:.[0].schema, table:.[0].table, columns:.[0].columns, index_type:.[0].index_type,
+         unique_indexes:(map(select((.non_unique|tonumber)==0) | .index)),
+         non_unique_indexes:(map(select((.non_unique|tonumber)==1) | .index))})
+')
+SAME_COLS_DIFF_UNIQ_COUNT=$(printf '%s' "$SAME_COLS_DIFF_UNIQ_JSON" | jq -r 'length')
+
 # Redundant/prefix indexes: if index A columns is a strict prefix of index B columns on same table
 # Conservative rule: only flag redundant when both indexes have same uniqueness (non_unique).
 REDUNDANT_INDEXES_JSON=$(printf '%s' "$INDEXES_JSON" | jq -c '
@@ -774,6 +784,19 @@ REDUNDANT_INDEXES_JSON=$(printf '%s' "$INDEXES_JSON" | jq -c '
   | (if .==null then [] else . end)
 ')
 REDUNDANT_INDEXES_COUNT=$(printf '%s' "$REDUNDANT_INDEXES_JSON" | jq -r 'length')
+
+# Unique index redundant to PRIMARY KEY (exact same cols)
+UNIQUE_REDUNDANT_PK_JSON=$(printf '%s' "$INDEXES_JSON" | jq -c '
+  group_by(.schema,.table)
+  | map(. as $l |
+      ($l | map(select(.index=="PRIMARY") | .columns) | .[0] // null) as $pk
+      | select($pk!=null)
+      | ($l | map(select(.index!="PRIMARY" and (.non_unique|tonumber)==0 and .columns==$pk)
+                | {schema:.schema, table:.table, unique_index:.index, pk_columns:$pk, index_type:.index_type}))
+    )
+  | add | (if .==null then [] else . end)
+')
+UNIQUE_REDUNDANT_PK_COUNT=$(printf '%s' "$UNIQUE_REDUNDANT_PK_JSON" | jq -r 'length')
 
 # Schema documentation / Mermaid ERD (best-effort; write files only)
 if [ -n "$SCHEMA_DIR" ]; then
@@ -934,8 +957,14 @@ if [ -n "$DUMP_DIR" ]; then
   # duplicate_indexes.csv
   printf '%s' "$DUPLICATE_INDEXES_JSON" | dump_csv_file "$DUMP_DIR/duplicate_indexes.csv" "Schema,Table,Indexes,Columns,IndexType,NonUnique" '.[] | [.schema,.table,(.indexes|join("|")),(.columns|join("|")),(.index_type//""),(.non_unique|tostring)] | @csv'
 
+  # same_cols_diff_uniqueness.csv
+  printf '%s' "$SAME_COLS_DIFF_UNIQ_JSON" | dump_csv_file "$DUMP_DIR/same_cols_diff_uniqueness.csv" "Schema,Table,Columns,UniqueIndexes,NonUniqueIndexes,IndexType" '.[] | [.schema,.table,(.columns|join("|")),(.unique_indexes|join("|")),(.non_unique_indexes|join("|")),(.index_type//"")] | @csv'
+
   # redundant_indexes.csv
   printf '%s' "$REDUNDANT_INDEXES_JSON" | dump_csv_file "$DUMP_DIR/redundant_indexes.csv" "Schema,Table,RedundantIndex,CoveredBy,RedundantCols,CoveringCols,NonUnique" '.[] | [.schema,.table,.redundant,.covered_by,(.redundant_cols|join("|")),(.covering_cols|join("|")),(.non_unique|tostring)] | @csv'
+
+  # unique_redundant_pk.csv
+  printf '%s' "$UNIQUE_REDUNDANT_PK_JSON" | dump_csv_file "$DUMP_DIR/unique_redundant_pk.csv" "Schema,Table,UniqueIndex,IndexType,PKColumns" '.[] | [.schema,.table,.unique_index,(.index_type//""),(.pk_columns|join("|"))] | @csv'
 fi
 
 PK_NAMING_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(type=="object") | select(.column != "id" and .column != (.table + "_id")) | {schema, table, column}]')
@@ -1501,8 +1530,12 @@ if [ "$JSON" -eq 1 ]; then
     --argjson tables_no_index "$TABLES_NO_INDEX_JSON" \
     --arg duplicate_indexes_count "$DUPLICATE_INDEXES_COUNT" \
     --argjson duplicate_indexes "$DUPLICATE_INDEXES_JSON" \
+    --arg same_cols_diff_uniq_count "$SAME_COLS_DIFF_UNIQ_COUNT" \
+    --argjson same_cols_diff_uniq "$SAME_COLS_DIFF_UNIQ_JSON" \
     --arg redundant_indexes_count "$REDUNDANT_INDEXES_COUNT" \
     --argjson redundant_indexes "$REDUNDANT_INDEXES_JSON" \
+    --arg unique_redundant_pk_count "$UNIQUE_REDUNDANT_PK_COUNT" \
+    --argjson unique_redundant_pk "$UNIQUE_REDUNDANT_PK_JSON" \
     --arg table_metrics_count "$TABLE_METRICS_COUNT" \
     --argjson table_metrics "$TABLE_METRICS_JSON" \
     --arg schema_dir "$SCHEMA_DIR" \
@@ -1764,8 +1797,12 @@ if [ "$JSON" -eq 1 ]; then
       tables_no_index:$tables_no_index,
       duplicate_indexes_count:$duplicate_indexes_count,
       duplicate_indexes:$duplicate_indexes,
+      same_cols_diff_uniq_count:$same_cols_diff_uniq_count,
+      same_cols_diff_uniq:$same_cols_diff_uniq,
       redundant_indexes_count:$redundant_indexes_count,
       redundant_indexes:$redundant_indexes,
+      unique_redundant_pk_count:$unique_redundant_pk_count,
+      unique_redundant_pk:$unique_redundant_pk,
       table_metrics_count:$table_metrics_count,
       table_metrics:$table_metrics,
       schema_dir:$schema_dir,
@@ -2031,13 +2068,22 @@ info "Tables with no indexes: $TABLES_NO_INDEX_COUNT"
 [ "$(num "$TABLES_NO_INDEX_COUNT")" -gt 0 ] && printf '%s' "$TABLES_NO_INDEX_JSON" | jq -r '.[:10][] | "[WARN] No index: " + .schema + "." + .table' || true
 info "Duplicate indexes (same cols/type/unique): $DUPLICATE_INDEXES_COUNT"
 [ "$(num "$DUPLICATE_INDEXES_COUNT")" -gt 0 ] && printf '%s' "$DUPLICATE_INDEXES_JSON" | jq -r '.[:10][] | "[WARN] Duplicate indexes on " + .schema + "." + .table + ": " + (.indexes|join(",")) + " cols=" + (.columns|join(","))' || true
+
+info "Same columns but different uniqueness: $SAME_COLS_DIFF_UNIQ_COUNT"
+[ "$(num "$SAME_COLS_DIFF_UNIQ_COUNT")" -gt 0 ] && printf '%s' "$SAME_COLS_DIFF_UNIQ_JSON" | jq -r '.[:10][] | "[WARN] Non-unique index redundant (unique exists) on " + .schema + "." + .table + " cols=" + (.columns|join(",")) + " unique=" + (.unique_indexes|join(",")) + " non_unique=" + (.non_unique_indexes|join(","))' || true
+
 info "Redundant (prefix) indexes: $REDUNDANT_INDEXES_COUNT"
 [ "$(num "$REDUNDANT_INDEXES_COUNT")" -gt 0 ] && printf '%s' "$REDUNDANT_INDEXES_JSON" | jq -r '.[:10][] | "[WARN] Redundant index " + .schema + "." + .table + "." + .redundant + " covered by " + .covered_by + (if (.non_unique|tonumber)==0 then " (UNIQUE)" else "" end)' || true
+
+info "UNIQUE index redundant to PRIMARY KEY: $UNIQUE_REDUNDANT_PK_COUNT"
+[ "$(num "$UNIQUE_REDUNDANT_PK_COUNT")" -gt 0 ] && printf '%s' "$UNIQUE_REDUNDANT_PK_JSON" | jq -r '.[:10][] | "[WARN] UNIQUE index " + .schema + "." + .table + "." + .unique_index + " duplicates PRIMARY KEY"' || true
 
 # Recommendations
 [ "$(num "$TABLES_NO_INDEX_COUNT")" -gt 0 ] && warn "Some tables have no indexes (see warnings above). Add at least a PRIMARY KEY." || true
 [ "$(num "$DUPLICATE_INDEXES_COUNT")" -gt 0 ] && warn "Duplicate indexes detected. Consider dropping redundant ones." || true
+[ "$(num "$SAME_COLS_DIFF_UNIQ_COUNT")" -gt 0 ] && warn "Non-unique indexes detected where an identical UNIQUE index exists. Consider dropping the non-unique ones." || true
 [ "$(num "$REDUNDANT_INDEXES_COUNT")" -gt 0 ] && warn "Redundant prefix indexes detected. Consider dropping narrower ones if covered by wider indexes." || true
+[ "$(num "$UNIQUE_REDUNDANT_PK_COUNT")" -gt 0 ] && warn "UNIQUE indexes duplicating PRIMARY KEY detected. Consider dropping them." || true
 
 section "Replication"
 info "Galera Synchronous replication: $HAVE_GALERA"
