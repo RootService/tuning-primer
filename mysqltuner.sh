@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.6.0-devel"
+VERSION="3.6.1-devel"
 
 usage() {
   cat <<USAGE
@@ -608,10 +608,8 @@ fi
 qcs=$(num "$QCACHE_SIZE")
 qcfm=$(num "$QCACHE_FREE_MEM")
 if [ "$qcs" -gt 0 ]; then
-  # used = 100 - free/query_cache_size
-  QCACHE_USED_PCT=$((100 - $(pct "$qcfm" "$qcs")))
-  [ "$QCACHE_USED_PCT" -lt 0 ] && QCACHE_USED_PCT=0
-  [ "$QCACHE_USED_PCT" -gt 100 ] && QCACHE_USED_PCT=100
+  # upstream-like: 100 - (free/query_cache_size)*100
+  QCACHE_USED_PCT=$(awk -v f="$qcfm" -v s="$qcs" 'BEGIN{printf "%.1f", 100 - (f/s)*100}')
 else
   QCACHE_USED_PCT=""
 fi
@@ -875,7 +873,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg qcache_efficiency_pct "${QCACHE_EFF_PCT:-}" \
     --arg qcache_hit_pct "$QCACHE_HIT_PCT" \
     --arg qcache_free_blocks_pct "$QCACHE_FREE_BLOCKS_PCT" \
-    --arg qcache_used_pct "${QCACHE_USED_PCT:-}" \
+    --arg qcache_used_pct "$QCACHE_USED_PCT" \
     --arg qcache_prunes_per_day "$QCACHE_PRUNES_PER_DAY" \
     --arg sort_merge_pct "${SORT_MERGE_PCT:-}" \
     --arg joins_without_indexes "$JOINS_WITHOUT_INDEXES" \
