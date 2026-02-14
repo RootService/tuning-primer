@@ -1,16 +1,22 @@
-MySQL Tuning Primer
-===================
+# RootService tuning-primer (POSIX shell)
 
-Modernized [MySQL performance tuning primer script](https://github.com/RootService/tuning-primer) for MySQL >= 5.5 <= 5.7
+This repository is a **POSIX sh** implementation derived from the upstream **MySQLTuner-perl** project.
 
+## License
 
-Based on the [MySQL performance tuning primer script](https://launchpad.net/mysql-tuning-primer) version 1.6-r1 released on 2011-08-06 by Matthew Montgomery and licenced under the GPLv2.
+This project is licensed under the **GNU GPL v3**.
 
+- Full text: `LICENSE.GPLv3`
 
+## Usage (planned)
 
+```sh
+./mysqltuner.sh --help
+```
 
-MySQLTuner.pl
--------------
+## Notes
 
-For a much better solution have a look at the
-[MySQL Tuner Perl Script](https://github.com/major/MySQLTuner-perl)
+- Goal: feature parity with MySQLTuner-perl, but implemented in portable POSIX shell (no bashisms).
+- Data files used by checks:
+  - `basic_passwords.txt`
+  - `vulnerabilities.csv`
