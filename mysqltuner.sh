@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.47.0-devel"
+VERSION="3.48.0-devel"
 
 usage() {
   cat <<USAGE
@@ -724,13 +724,13 @@ if [ "$TBSTAT" -eq 1 ] || [ -n "$SCHEMA_DIR" ]; then
   TABLE_IDX_RAW_JSON=$(mysql_query_silent "SELECT t.table_schema, t.table_name, t.engine, s.index_name, GROUP_CONCAT(s.column_name ORDER BY s.seq_in_index) AS cols, s.index_type, s.non_unique FROM information_schema.tables t LEFT JOIN information_schema.statistics s ON t.table_schema=s.table_schema AND t.table_name=s.table_name WHERE t.table_type='BASE TABLE' AND t.table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY t.table_schema, t.table_name, t.engine, s.index_name, s.index_type, s.non_unique ORDER BY t.table_schema, t.table_name, s.index_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2], index:.[3], cols:.[4], index_type:.[5], non_unique:.[6]}]')
 
   # table column summary (1 row per table)
-  TABLE_COL_RAW_JSON=$(mysql_query_silent "SELECT table_schema, table_name, COUNT(*) AS columns, SUM(CASE WHEN is_nullable='YES' THEN 1 ELSE 0 END) AS nullable_columns, SUM(CASE WHEN data_type='json' THEN 1 ELSE 0 END) AS json_columns, SUM(CASE WHEN data_type IN ('text','tinytext','mediumtext','longtext') THEN 1 ELSE 0 END) AS text_columns, SUM(CASE WHEN data_type IN ('blob','tinyblob','mediumblob','longblob') THEN 1 ELSE 0 END) AS blob_columns FROM information_schema.columns WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema, table_name ORDER BY table_schema, table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], columns:(.[2]|tonumber), nullable_columns:(.[3]|tonumber), json_columns:(.[4]|tonumber), text_columns:(.[5]|tonumber), blob_columns:(.[6]|tonumber)}]')
+  TABLE_COL_RAW_JSON=$(mysql_query_silent "SELECT table_schema, table_name, COUNT(*) AS columns, SUM(CASE WHEN is_nullable='YES' THEN 1 ELSE 0 END) AS nullable_columns, SUM(CASE WHEN data_type='json' THEN 1 ELSE 0 END) AS json_columns, SUM(CASE WHEN data_type IN ('text','tinytext','mediumtext','longtext') THEN 1 ELSE 0 END) AS text_columns, SUM(CASE WHEN data_type IN ('blob','tinyblob','mediumblob','longblob') THEN 1 ELSE 0 END) AS blob_columns, SUM(CASE WHEN column_key='PRI' THEN 1 ELSE 0 END) AS pk_columns, SUM(CASE WHEN extra LIKE '%auto_increment%' THEN 1 ELSE 0 END) AS auto_increment_columns, SUM(CASE WHEN data_type IN ('timestamp','datetime') THEN 1 ELSE 0 END) AS datetime_columns FROM information_schema.columns WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema, table_name ORDER BY table_schema, table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], columns:(.[2]|tonumber), nullable_columns:(.[3]|tonumber), json_columns:(.[4]|tonumber), text_columns:(.[5]|tonumber), blob_columns:(.[6]|tonumber), pk_columns:(.[7]|tonumber), auto_increment_columns:(.[8]|tonumber), datetime_columns:(.[9]|tonumber)}]')
 
   # merge into per-table objects
   TABLE_METRICS_JSON=$(jq -n --argjson idx "$TABLE_IDX_RAW_JSON" --argjson col "$TABLE_COL_RAW_JSON" '
     ($idx | group_by(.schema,.table) | map({schema:.[0].schema, table:.[0].table, engine:.[0].engine, indexes:(map(select(.index!="" and .index!="NULL") | {name:.index, columns:(.cols|split(",")), type:.index_type, non_unique:((.non_unique|tonumber?)//0) }))})) as $t
     | ($col | map({key:(.schema+"\u0000"+.table), v:.}) | from_entries) as $cm
-    | $t | map(. + (($cm[(.schema+"\u0000"+.table)] // {}) | {columns, nullable_columns, json_columns, text_columns, blob_columns}))
+    | $t | map(. + (($cm[(.schema+"\u0000"+.table)] // {}) | {columns, nullable_columns, json_columns, text_columns, blob_columns, pk_columns, auto_increment_columns, datetime_columns}))
   ')
 
   TABLE_METRICS_COUNT=$(printf '%s' "$TABLE_METRICS_JSON" | jq -r 'length')
@@ -829,7 +829,10 @@ if [ -n "$SCHEMA_DIR" ]; then
         printf '## Summary\n\n'
         printf '%s\n' "- Engine: $(printf '%s' "$t" | jq -r '.engine//""')"
         printf '%s\n' "- Columns: $(printf '%s' "$t" | jq -r '.columns//0')"
+        printf '%s\n' "- PK columns: $(printf '%s' "$t" | jq -r '.pk_columns//0')"
+        printf '%s\n' "- AUTO_INCREMENT columns: $(printf '%s' "$t" | jq -r '.auto_increment_columns//0')"
         printf '%s\n' "- Nullable columns: $(printf '%s' "$t" | jq -r '.nullable_columns//0')"
+        printf '%s\n' "- Datetime columns: $(printf '%s' "$t" | jq -r '.datetime_columns//0')"
         printf '%s\n' "- JSON columns: $(printf '%s' "$t" | jq -r '.json_columns//0')"
         printf '%s\n' "- TEXT columns: $(printf '%s' "$t" | jq -r '.text_columns//0')"
         printf '%s\n\n' "- BLOB columns: $(printf '%s' "$t" | jq -r '.blob_columns//0')"
