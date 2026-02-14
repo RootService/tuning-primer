@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="2.1.0-devel"
+VERSION="2.2.0-devel"
 
 usage() {
   cat <<USAGE
@@ -470,6 +470,14 @@ SORT_SCAN=$(kv_get "$STATUS_TSV" Sort_scan)
 SELECT_FULL_JOIN=$(kv_get "$STATUS_TSV" Select_full_join)
 SELECT_FULL_RANGE_JOIN=$(kv_get "$STATUS_TSV" Select_full_range_join)
 SELECT_RANGE_CHECK=$(kv_get "$STATUS_TSV" Select_range_check)
+
+HANDLER_READ_RND_NEXT=$(kv_get "$STATUS_TSV" Handler_read_rnd_next)
+HANDLER_READ_RND=$(kv_get "$STATUS_TSV" Handler_read_rnd)
+HANDLER_READ_FIRST=$(kv_get "$STATUS_TSV" Handler_read_first)
+HANDLER_READ_KEY=$(kv_get "$STATUS_TSV" Handler_read_key)
+HANDLER_READ_NEXT=$(kv_get "$STATUS_TSV" Handler_read_next)
+HANDLER_READ_PREV=$(kv_get "$STATUS_TSV" Handler_read_prev)
+HANDLER_READ_LAST=$(kv_get "$STATUS_TSV" Handler_read_last)
 QCACHE_SIZE=$(kv_get "$VARS_TSV" query_cache_size)
 QCACHE_TYPE=$(kv_get "$VARS_TSV" query_cache_type)
 QCACHE_LIMIT=$(kv_get "$VARS_TSV" query_cache_limit)
@@ -537,13 +545,16 @@ else
   KEY_BUFFER_HIT_PCT=""
 fi
 
-# InnoDB buffer pool free percent (best-effort)
+# InnoDB buffer pool free/dirty percent (best-effort)
 bpt=$(num "$INNODB_BP_PAGES_TOTAL")
 bpf=$(num "$INNODB_BP_PAGES_FREE")
+bpd=$(num "$INNODB_BP_PAGES_DIRTY")
 if [ "$bpt" -gt 0 ]; then
   INNODB_BP_FREE_PCT=$(pct "$bpf" "$bpt")
+  INNODB_BP_DIRTY_PCT=$(pct "$bpd" "$bpt")
 else
   INNODB_BP_FREE_PCT=""
+  INNODB_BP_DIRTY_PCT=""
 fi
 
 # Memory estimate (best-effort)
@@ -619,6 +630,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg innodb_buffer_pool_bytes_data "$INNODB_BP_BYTES_DATA" \
     --arg innodb_buffer_pool_bytes_free "$INNODB_BP_BYTES_FREE" \
     --arg innodb_buffer_pool_free_pct "$INNODB_BP_FREE_PCT" \
+    --arg innodb_buffer_pool_dirty_pct "$INNODB_BP_DIRTY_PCT" \
     --arg bind_address "$BIND_ADDRESS" \
     --arg skip_networking "$SKIP_NETWORKING" \
     --arg port "$PORT_VAR" \
@@ -650,6 +662,13 @@ if [ "$JSON" -eq 1 ]; then
     --arg select_full_join "$SELECT_FULL_JOIN" \
     --arg select_full_range_join "$SELECT_FULL_RANGE_JOIN" \
     --arg select_range_check "$SELECT_RANGE_CHECK" \
+    --arg handler_read_rnd_next "$HANDLER_READ_RND_NEXT" \
+    --arg handler_read_rnd "$HANDLER_READ_RND" \
+    --arg handler_read_first "$HANDLER_READ_FIRST" \
+    --arg handler_read_key "$HANDLER_READ_KEY" \
+    --arg handler_read_next "$HANDLER_READ_NEXT" \
+    --arg handler_read_prev "$HANDLER_READ_PREV" \
+    --arg handler_read_last "$HANDLER_READ_LAST" \
     --arg mysql_user_readable "$MYSQL_USER_READABLE" \
     --arg mysql_user_col4 "$USER_COL4" \
     --arg passwordfile "$PASSWORDFILE" \
@@ -715,6 +734,7 @@ if [ "$JSON" -eq 1 ]; then
       innodb_buffer_pool_bytes_data:$innodb_buffer_pool_bytes_data,
       innodb_buffer_pool_bytes_free:$innodb_buffer_pool_bytes_free,
       innodb_buffer_pool_free_pct:$innodb_buffer_pool_free_pct,
+      innodb_buffer_pool_dirty_pct:$innodb_buffer_pool_dirty_pct,
       bind_address:$bind_address,
       skip_networking:$skip_networking,
       port:$port,
@@ -746,6 +766,13 @@ if [ "$JSON" -eq 1 ]; then
       select_full_join:$select_full_join,
       select_full_range_join:$select_full_range_join,
       select_range_check:$select_range_check,
+      handler_read_rnd_next:$handler_read_rnd_next,
+      handler_read_rnd:$handler_read_rnd,
+      handler_read_first:$handler_read_first,
+      handler_read_key:$handler_read_key,
+      handler_read_next:$handler_read_next,
+      handler_read_prev:$handler_read_prev,
+      handler_read_last:$handler_read_last,
       mysql_user_readable:$mysql_user_readable,
       mysql_user_col4:$mysql_user_col4,
       passwordfile:$passwordfile,
@@ -919,6 +946,14 @@ info "Select_range_check:     $SELECT_RANGE_CHECK"
 [ "$(num "$SELECT_FULL_JOIN")" -gt 0 ] && warn "Select_full_join > 0 (joins without indexes detected)" || true
 [ "$(num "$SELECT_RANGE_CHECK")" -gt 0 ] && warn "Select_range_check > 0 (joins without keys in some cases)" || true
 
+section "Handler (read patterns)"
+info "Handler_read_rnd_next: $HANDLER_READ_RND_NEXT"
+info "Handler_read_rnd:      $HANDLER_READ_RND"
+info "Handler_read_key:      $HANDLER_READ_KEY"
+info "Handler_read_next:     $HANDLER_READ_NEXT"
+# Heuristic: high rnd_next often indicates full table scans
+[ "$(num "$HANDLER_READ_RND_NEXT")" -gt 0 ] && warn "Handler_read_rnd_next > 0 (possible full table scans)" || true
+
 section "Slow Query Log"
 [ -n "$SLOW_QUERY_LOG" ] && info "slow_query_log: $SLOW_QUERY_LOG"
 [ -n "$LONG_QUERY_TIME" ] && info "long_query_time: $LONG_QUERY_TIME"
@@ -967,7 +1002,10 @@ fi
 if [ "$(num "$INNODB_BP_PAGES_TOTAL")" -gt 0 ]; then
   info "Innodb_buffer_pool_pages_total: $INNODB_BP_PAGES_TOTAL"
   info "Innodb_buffer_pool_pages_free:  $INNODB_BP_PAGES_FREE (${INNODB_BP_FREE_PCT}% free)"
-  [ "$(num "$INNODB_BP_PAGES_DIRTY")" -gt 0 ] && info "Innodb_buffer_pool_pages_dirty: $INNODB_BP_PAGES_DIRTY" || true
+  if [ "$(num "$INNODB_BP_PAGES_DIRTY")" -gt 0 ]; then
+    info "Innodb_buffer_pool_pages_dirty: $INNODB_BP_PAGES_DIRTY (${INNODB_BP_DIRTY_PCT}% dirty)"
+    [ "$(num "$INNODB_BP_DIRTY_PCT")" -ge 50 ] && warn "High dirty pages in buffer pool (${INNODB_BP_DIRTY_PCT}%)" || true
+  fi
   [ "$(num "$INNODB_BP_FREE_PCT")" -lt 3 ] && warn "InnoDB buffer pool has <3% free pages (${INNODB_BP_FREE_PCT}%)" || true
 fi
 if [ "$(num "$INNODB_BP_BYTES_DATA")" -gt 0 ] || [ "$(num "$INNODB_BP_BYTES_FREE")" -gt 0 ]; then
