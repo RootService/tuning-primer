@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.27.0-devel"
+VERSION="3.28.0-devel"
 
 usage() {
   cat <<USAGE
@@ -516,7 +516,7 @@ INNODB_DATA_BYTES=$(mysql_query_silent "SELECT IFNULL(SUM(data_length+index_leng
 ENGINES_ENABLED_CSV=$(mysql_query_silent "SELECT ENGINE,SUPPORT FROM information_schema.ENGINES ORDER BY ENGINE;" | awk -F"\t" '($2=="YES"||$2=="DEFAULT"){print $1}' | tr '\n' ',' | sed 's/,$//')
 ENGINE_SIZES_JSON=$(mysql_query_silent "SELECT ENGINE, IFNULL(SUM(DATA_LENGTH+INDEX_LENGTH),0) AS total_bytes, COUNT(*) AS table_count, IFNULL(SUM(DATA_LENGTH),0) AS data_bytes, IFNULL(SUM(INDEX_LENGTH),0) AS index_bytes FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys') AND ENGINE IS NOT NULL GROUP BY ENGINE ORDER BY ENGINE;" | jq -Rn '[inputs | select(length>0) | split("\t") | {engine:.[0], total_bytes:(.[1]|tonumber), table_count:(.[2]|tonumber), data_bytes:(.[3]|tonumber), index_bytes:(.[4]|tonumber)}]')
 
-# Table hygiene (best-effort)
+# Table hygiene / modeling (best-effort)
 # 1) fragmented tables: DATA_FREE ratio >10% and table >100MiB
 FRAGMENTED_TABLES_JSON=$(mysql_query_silent "SELECT TABLE_SCHEMA, TABLE_NAME, ENGINE, CAST(DATA_FREE AS SIGNED), (DATA_LENGTH+INDEX_LENGTH) AS used_bytes FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys') AND ENGINE IS NOT NULL AND ENGINE!='MEMORY' AND (DATA_LENGTH/1024/1024)>100 AND CAST(DATA_FREE AS SIGNED)*100/(DATA_LENGTH+INDEX_LENGTH+CAST(DATA_FREE AS SIGNED)) > 10 ORDER BY CAST(DATA_FREE AS SIGNED) DESC;" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2], data_free_bytes:(.[3]|tonumber), used_bytes:(.[4]|tonumber)}]')
 FRAGMENTED_TABLES_COUNT=$(printf '%s' "$FRAGMENTED_TABLES_JSON" | jq -r 'length')
@@ -524,6 +524,18 @@ FRAGMENTED_TABLES_COUNT=$(printf '%s' "$FRAGMENTED_TABLES_JSON" | jq -r 'length'
 # 2) tables without any PRI/UNI key
 TABLES_NO_PK_JSON=$(mysql_query_silent "SELECT c.table_schema, c.table_name FROM information_schema.columns c JOIN information_schema.tables t USING (table_schema, table_name) WHERE c.table_schema NOT IN ('sys','mysql','information_schema','performance_schema') AND t.table_type='BASE TABLE' GROUP BY c.table_schema,c.table_name HAVING SUM(IF(c.column_key IN ('PRI','UNI'),1,0)) = 0;" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1]}]')
 TABLES_NO_PK_COUNT=$(printf '%s' "$TABLES_NO_PK_JSON" | jq -r 'length')
+
+# 3) large tables (>1GiB) without secondary indexes
+LARGE_TABLES_NO_SEC_INDEX_JSON=$(mysql_query_silent "SELECT t.table_schema, t.table_name, (t.data_length + t.index_length) AS total_bytes FROM information_schema.tables t WHERE t.table_type='BASE TABLE' AND (t.data_length + t.index_length) > 1024*1024*1024 AND (SELECT COUNT(*) FROM information_schema.statistics s WHERE s.table_schema=t.table_schema AND s.table_name=t.table_name AND s.index_name != 'PRIMARY') = 0 AND t.table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], total_bytes:(.[2]|tonumber)}]')
+LARGE_TABLES_NO_SEC_INDEX_COUNT=$(printf '%s' "$LARGE_TABLES_NO_SEC_INDEX_JSON" | jq -r 'length')
+
+# 4) foreign key type mismatches
+FK_MISMATCHES_JSON=$(mysql_query_silent "SELECT CONCAT(k.table_schema,'.',k.table_name,' (',k.column_name,': ',c1.column_type,') -> ',k.referenced_table_schema,'.',k.referenced_table_name,' (',k.referenced_column_name,': ',c2.column_type,')') FROM information_schema.key_column_usage k JOIN information_schema.columns c1 ON k.table_schema=c1.table_schema AND k.table_name=c1.table_name AND k.column_name=c1.column_name JOIN information_schema.columns c2 ON k.referenced_table_schema=c2.table_schema AND k.referenced_table_name=c2.table_name AND k.referenced_column_name=c2.column_name WHERE k.referenced_table_name IS NOT NULL AND (c1.data_type != c2.data_type OR c1.column_type != c2.column_type) AND k.table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" | jq -Rn '[inputs | select(length>0) | {mismatch:.}]')
+FK_MISMATCHES_COUNT=$(printf '%s' "$FK_MISMATCHES_JSON" | jq -r 'length')
+
+# 5) non-InnoDB tables
+NON_INNODB_TABLES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, engine FROM information_schema.tables t WHERE t.engine <> 'InnoDB' AND t.table_type='BASE TABLE' AND t.table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2]}]')
+NON_INNODB_TABLES_COUNT=$(printf '%s' "$NON_INNODB_TABLES_JSON" | jq -r 'length')
 
 # MyISAM / key buffer metrics
 KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
@@ -989,6 +1001,12 @@ if [ "$JSON" -eq 1 ]; then
     --argjson fragmented_tables "$FRAGMENTED_TABLES_JSON" \
     --arg tables_no_pk_count "$TABLES_NO_PK_COUNT" \
     --argjson tables_no_pk "$TABLES_NO_PK_JSON" \
+    --arg large_tables_no_sec_index_count "$LARGE_TABLES_NO_SEC_INDEX_COUNT" \
+    --argjson large_tables_no_sec_index "$LARGE_TABLES_NO_SEC_INDEX_JSON" \
+    --arg fk_mismatches_count "$FK_MISMATCHES_COUNT" \
+    --argjson fk_mismatches "$FK_MISMATCHES_JSON" \
+    --arg non_innodb_tables_count "$NON_INNODB_TABLES_COUNT" \
+    --argjson non_innodb_tables "$NON_INNODB_TABLES_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1177,6 +1195,12 @@ if [ "$JSON" -eq 1 ]; then
       fragmented_tables:$fragmented_tables,
       tables_no_pk_count:$tables_no_pk_count,
       tables_no_pk:$tables_no_pk,
+      large_tables_no_sec_index_count:$large_tables_no_sec_index_count,
+      large_tables_no_sec_index:$large_tables_no_sec_index,
+      fk_mismatches_count:$fk_mismatches_count,
+      fk_mismatches:$fk_mismatches,
+      non_innodb_tables_count:$non_innodb_tables_count,
+      non_innodb_tables:$non_innodb_tables,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1293,11 +1317,27 @@ section "Tables"
 info "Fragmented tables: $FRAGMENTED_TABLES_COUNT"
 if [ "$(num "$FRAGMENTED_TABLES_COUNT")" -gt 0 ]; then
   # show top 10 by data_free
-  printf '%s' "$FRAGMENTED_TABLES_JSON" | jq -r '.[:10][] | "[WARN] Fragmented: " + .schema + "." + .table + " engine=" + .engine + " data_free=" + (.data_free_bytes|tostring) + " used=" + (.used_bytes|tostring)' 
+  printf '%s' "$FRAGMENTED_TABLES_JSON" | jq -r '.[:10][] | "[WARN] Fragmented: " + .schema + "." + .table + " engine=" + .engine + " data_free=" + (.data_free_bytes|tostring) + " used=" + (.used_bytes|tostring)'
 fi
+
 info "Tables without PRI/UNI key: $TABLES_NO_PK_COUNT"
 if [ "$(num "$TABLES_NO_PK_COUNT")" -gt 0 ]; then
   printf '%s' "$TABLES_NO_PK_JSON" | jq -r '.[:10][] | "[WARN] No PK/UK: " + .schema + "." + .table'
+fi
+
+info "Large tables without secondary indexes (>1GiB): $LARGE_TABLES_NO_SEC_INDEX_COUNT"
+if [ "$(num "$LARGE_TABLES_NO_SEC_INDEX_COUNT")" -gt 0 ]; then
+  printf '%s' "$LARGE_TABLES_NO_SEC_INDEX_JSON" | jq -r '.[:10][] | "[WARN] Large no-sec-index: " + .schema + "." + .table + " size=" + (.total_bytes|tostring)'
+fi
+
+info "Foreign key type mismatches: $FK_MISMATCHES_COUNT"
+if [ "$(num "$FK_MISMATCHES_COUNT")" -gt 0 ]; then
+  printf '%s' "$FK_MISMATCHES_JSON" | jq -r '.[:10][] | "[WARN] FK mismatch: " + .mismatch'
+fi
+
+info "Non-InnoDB base tables: $NON_INNODB_TABLES_COUNT"
+if [ "$(num "$NON_INNODB_TABLES_COUNT")" -gt 0 ]; then
+  printf '%s' "$NON_INNODB_TABLES_JSON" | jq -r '.[:10][] | "[WARN] Non-InnoDB: " + .schema + "." + .table + " engine=" + .engine'
 fi
 
 section "Replication"
