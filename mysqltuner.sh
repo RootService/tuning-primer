@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="2.3.0-devel"
+VERSION="2.4.0-devel"
 
 usage() {
   cat <<USAGE
@@ -399,6 +399,7 @@ THREADS_RUNNING=$(kv_get "$STATUS_TSV" Threads_running)
 THREADS_CREATED=$(kv_get "$STATUS_TSV" Threads_created)
 CONNECTIONS=$(kv_get "$STATUS_TSV" Connections)
 ABORTED_CONNECTS=$(kv_get "$STATUS_TSV" Aborted_connects)
+ABORTED_CLIENTS=$(kv_get "$STATUS_TSV" Aborted_clients)
 
 OPEN_TABLES=$(kv_get "$STATUS_TSV" Open_tables)
 
@@ -514,6 +515,7 @@ PERFORMANCE_SCHEMA=$(kv_get "$VARS_TSV" performance_schema)
 # Derived metrics
 QPS=$(rate_per_s "$QUESTIONS" "$UPTIME_S")
 ABORT_PCT=$(pct "$ABORTED_CONNECTS" "$CONNECTIONS")
+ABORTED_CLIENTS_PCT=$(pct "$ABORTED_CLIENTS" "$CONNECTIONS")
 OPENED_TABLES_PS=$(rate_per_s "$OPENED_TABLES" "$UPTIME_S")
 
 # Thread cache hit rate (best-effort)
@@ -614,7 +616,10 @@ if [ "$JSON" -eq 1 ]; then
     --arg threads_created "$THREADS_CREATED" \
     --arg thread_cache_size "$THREAD_CACHE_SIZE" \
     --arg thread_cache_hit_pct "$THREAD_CACHE_HIT_PCT" \
+    --arg aborted_connects "$ABORTED_CONNECTS" \
     --arg aborted_connects_pct "$ABORT_PCT" \
+    --arg aborted_clients "$ABORTED_CLIENTS" \
+    --arg aborted_clients_pct "$ABORTED_CLIENTS_PCT" \
     --arg opened_tables_per_s "$OPENED_TABLES_PS" \
     --arg open_tables "$OPEN_TABLES" \
     --arg opened_table_definitions "$OPENED_TABLE_DEFS" \
@@ -721,7 +726,10 @@ if [ "$JSON" -eq 1 ]; then
       threads_created:$threads_created,
       thread_cache_size:$thread_cache_size,
       thread_cache_hit_pct:$thread_cache_hit_pct,
+      aborted_connects:$aborted_connects,
       aborted_connects_pct:$aborted_connects_pct,
+      aborted_clients:$aborted_clients,
+      aborted_clients_pct:$aborted_clients_pct,
       opened_tables_per_s:$opened_tables_per_s,
       open_tables:$open_tables,
       opened_table_definitions:$opened_table_definitions,
@@ -906,6 +914,8 @@ if [ -n "${THREAD_CACHE_HIT_PCT:-}" ]; then
 fi
 info "Aborted_connects:     $ABORTED_CONNECTS (${ABORT_PCT}%)"
 [ "$(num "$ABORTED_CONNECTS")" -gt 0 ] && [ "$ABORT_PCT" -ge 5 ] && warn "High aborted connect rate (${ABORT_PCT}%)"
+info "Aborted_clients:      $ABORTED_CLIENTS (${ABORTED_CLIENTS_PCT}%)"
+[ "$(num "$ABORTED_CLIENTS")" -gt 0 ] && [ "$ABORTED_CLIENTS_PCT" -ge 5 ] && warn "High aborted clients rate (${ABORTED_CLIENTS_PCT}%)" || true
 
 section "Memory"
 info "key_buffer_size:         $(bytes_h "$KEY_BUFFER_SIZE")"
