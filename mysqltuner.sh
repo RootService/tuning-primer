@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.39.0-devel"
+VERSION="3.40.0-devel"
 
 usage() {
   cat <<USAGE
@@ -650,6 +650,14 @@ DB_ENGINES_COUNT=$(printf '%s' "$DB_ENGINES_JSON" | jq -r 'length')
 DB_BREAKDOWN_JSON=$(mysql_query_silent "SELECT table_schema, IFNULL(SUM(table_rows),0) AS rows, IFNULL(SUM(data_length),0) AS data_bytes, IFNULL(SUM(index_length),0) AS index_bytes, IFNULL(SUM(data_length+index_length),0) AS total_bytes, COUNT(CASE WHEN table_type='BASE TABLE' THEN 1 END) AS tables, COUNT(CASE WHEN table_type='VIEW' THEN 1 END) AS views, COUNT(DISTINCT engine) AS engines, COUNT(DISTINCT table_collation) AS collations FROM information_schema.tables WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys') GROUP BY table_schema ORDER BY total_bytes DESC;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], rows:(.[1]|tonumber), data_bytes:(.[2]|tonumber), index_bytes:(.[3]|tonumber), total_bytes:(.[4]|tonumber), tables:(.[5]|tonumber), views:(.[6]|tonumber), engines:(.[7]|tonumber), collations:(.[8]|tonumber)}]')
 DB_BREAKDOWN_COUNT=$(printf '%s' "$DB_BREAKDOWN_JSON" | jq -r 'length')
 
+# Largest tables (best-effort)
+LARGEST_TABLES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, engine, IFNULL(table_rows,0), IFNULL(data_length,0), IFNULL(index_length,0), IFNULL(data_length+index_length,0) AS total_bytes, CAST(IFNULL(data_free,0) AS SIGNED) AS data_free FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY total_bytes DESC LIMIT 20;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2], rows:(.[3]|tonumber), data_bytes:(.[4]|tonumber), index_bytes:(.[5]|tonumber), total_bytes:(.[6]|tonumber), data_free_bytes:(.[7]|tonumber)}]')
+LARGEST_TABLES_COUNT=$(printf '%s' "$LARGEST_TABLES_JSON" | jq -r 'length')
+
+# Index counts per database (best-effort)
+DB_INDEX_BREAKDOWN_JSON=$(mysql_query_silent "SELECT table_schema, COUNT(DISTINCT CONCAT(table_name, index_name)) AS indexes FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys') GROUP BY table_schema ORDER BY indexes DESC;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], indexes:(.[1]|tonumber)}]')
+DB_INDEX_BREAKDOWN_COUNT=$(printf '%s' "$DB_INDEX_BREAKDOWN_JSON" | jq -r 'length')
+
 # Optional: write upstream-style CSV dumps
 if [ -n "$DUMP_DIR" ]; then
   mkdir -p "$DUMP_DIR" 2>/dev/null || true
@@ -679,6 +687,12 @@ if [ -n "$DUMP_DIR" ]; then
 
   # databases_breakdown.csv
   printf '%s' "$DB_BREAKDOWN_JSON" | dump_csv_file "$DUMP_DIR/databases_breakdown.csv" "Schema,Tables,Views,Rows,DataBytes,IndexBytes,TotalBytes,Engines,Collations" '.[] | [.schema,.tables,.views,.rows,.data_bytes,.index_bytes,.total_bytes,.engines,.collations] | @csv'
+
+  # db_index_breakdown.csv
+  printf '%s' "$DB_INDEX_BREAKDOWN_JSON" | dump_csv_file "$DUMP_DIR/db_index_breakdown.csv" "Schema,Indexes" '.[] | [.schema,.indexes] | @csv'
+
+  # largest_tables.csv
+  printf '%s' "$LARGEST_TABLES_JSON" | dump_csv_file "$DUMP_DIR/largest_tables.csv" "Schema,Table,Engine,Rows,DataBytes,IndexBytes,TotalBytes,DataFreeBytes" '.[] | [.schema,.table,(.engine//""),.rows,.data_bytes,.index_bytes,.total_bytes,.data_free_bytes] | @csv'
 fi
 
 PK_NAMING_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(.column != "id" and .column != (.table + "_id")) | {schema, table, column}]')
@@ -1214,6 +1228,10 @@ if [ "$JSON" -eq 1 ]; then
     --argjson db_engines "$DB_ENGINES_JSON" \
     --arg db_breakdown_count "$DB_BREAKDOWN_COUNT" \
     --argjson db_breakdown "$DB_BREAKDOWN_JSON" \
+    --arg db_index_breakdown_count "$DB_INDEX_BREAKDOWN_COUNT" \
+    --argjson db_index_breakdown "$DB_INDEX_BREAKDOWN_JSON" \
+    --arg largest_tables_count "$LARGEST_TABLES_COUNT" \
+    --argjson largest_tables "$LARGEST_TABLES_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1456,6 +1474,10 @@ if [ "$JSON" -eq 1 ]; then
       db_engines:$db_engines,
       db_breakdown_count:$db_breakdown_count,
       db_breakdown:$db_breakdown,
+      db_index_breakdown_count:$db_index_breakdown_count,
+      db_index_breakdown:$db_index_breakdown,
+      largest_tables_count:$largest_tables_count,
+      largest_tables:$largest_tables,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1683,7 +1705,17 @@ info "All user schemas: rows=$DB_TOTAL_ROWS data=$(bytes_h "$DB_DATA_BYTES") ind
 info "Charsets: $DB_CHARSETS_COUNT  Collations: $DB_COLLATIONS_COUNT  Engines: $DB_ENGINES_COUNT"
 if [ "$(num "$DB_BREAKDOWN_COUNT")" -gt 0 ]; then
   info "Per-database breakdown: $DB_BREAKDOWN_COUNT"
-  printf '%s' "$DB_BREAKDOWN_JSON" | jq -r '.[:10][] | "[INFO] DB " + .schema + ": tables=" + (.tables|tostring) + " views=" + (.views|tostring) + " rows=" + (.rows|tostring) + " total=" + (.total_bytes|tostring)' 
+  printf '%s' "$DB_BREAKDOWN_JSON" | jq -r '.[:10][] | "[INFO] DB " + .schema + ": tables=" + (.tables|tostring) + " views=" + (.views|tostring) + " rows=" + (.rows|tostring) + " total=" + (.total_bytes|tostring)'
+fi
+
+info "Indexes per database: $DB_INDEX_BREAKDOWN_COUNT"
+if [ "$(num "$DB_INDEX_BREAKDOWN_COUNT")" -gt 0 ]; then
+  printf '%s' "$DB_INDEX_BREAKDOWN_JSON" | jq -r '.[:10][] | "[INFO] DB " + .schema + ": indexes=" + (.indexes|tostring)'
+fi
+
+info "Largest tables (top 20): $LARGEST_TABLES_COUNT"
+if [ "$(num "$LARGEST_TABLES_COUNT")" -gt 0 ]; then
+  printf '%s' "$LARGEST_TABLES_JSON" | jq -r '.[:10][] | "[INFO] Table " + .schema + "." + .table + " engine=" + (.engine//"") + " rows=" + (.rows|tostring) + " total=" + (.total_bytes|tostring)'
 fi
 
 section "Replication"
