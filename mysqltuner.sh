@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.2.0-devel"
+VERSION="3.3.0-devel"
 
 usage() {
   cat <<USAGE
@@ -454,6 +454,7 @@ INNODB_FLUSH_METHOD=$(kv_get "$VARS_TSV" innodb_flush_method)
 
 INNODB_LOG_WAITS=$(kv_get "$STATUS_TSV" Innodb_log_waits)
 INNODB_LOG_WRITE_REQ=$(kv_get "$STATUS_TSV" Innodb_log_write_requests)
+INNODB_LOG_WRITES=$(kv_get "$STATUS_TSV" Innodb_log_writes)
 INNODB_OS_LOG_FSYNCS=$(kv_get "$STATUS_TSV" Innodb_os_log_fsyncs)
 INNODB_OS_LOG_WRITTEN=$(kv_get "$STATUS_TSV" Innodb_os_log_written)
 
@@ -665,16 +666,28 @@ else
   KEY_BUFFER_HIT_PCT=""
 fi
 
-# InnoDB buffer pool free/dirty percent (best-effort)
+# InnoDB buffer pool free/used/dirty percent (best-effort)
 bpt=$(num "$INNODB_BP_PAGES_TOTAL")
 bpf=$(num "$INNODB_BP_PAGES_FREE")
 bpd=$(num "$INNODB_BP_PAGES_DIRTY")
 if [ "$bpt" -gt 0 ]; then
   INNODB_BP_FREE_PCT=$(pct "$bpf" "$bpt")
+  INNODB_BP_USED_PCT=$((100 - $(num "$INNODB_BP_FREE_PCT")))
   INNODB_BP_DIRTY_PCT=$(pct "$bpd" "$bpt")
 else
   INNODB_BP_FREE_PCT=""
+  INNODB_BP_USED_PCT=""
   INNODB_BP_DIRTY_PCT=""
+fi
+
+# InnoDB log write cache efficiency (best-effort)
+lwr=$(num "$INNODB_LOG_WRITE_REQ")
+lw=$(num "$INNODB_LOG_WRITES")
+if [ "$lwr" -gt 0 ]; then
+  # pct = (write_requests - log_writes) / write_requests
+  INNODB_LOG_WRITE_EFF_PCT=$(pct "$((lwr - lw))" "$lwr")
+else
+  INNODB_LOG_WRITE_EFF_PCT=""
 fi
 
 # Memory estimate (best-effort)
@@ -770,6 +783,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg innodb_flush_method "$INNODB_FLUSH_METHOD" \
     --arg innodb_log_waits "$INNODB_LOG_WAITS" \
     --arg innodb_log_write_requests "$INNODB_LOG_WRITE_REQ" \
+    --arg innodb_log_writes "$INNODB_LOG_WRITES" \
+    --arg innodb_log_write_efficiency_pct "${INNODB_LOG_WRITE_EFF_PCT:-}" \
     --arg innodb_os_log_fsyncs "$INNODB_OS_LOG_FSYNCS" \
     --arg innodb_os_log_written "$INNODB_OS_LOG_WRITTEN" \
     --arg innodb_buffer_pool_pages_total "$INNODB_BP_PAGES_TOTAL" \
@@ -778,6 +793,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg innodb_buffer_pool_bytes_data "$INNODB_BP_BYTES_DATA" \
     --arg innodb_buffer_pool_bytes_free "$INNODB_BP_BYTES_FREE" \
     --arg innodb_buffer_pool_free_pct "$INNODB_BP_FREE_PCT" \
+    --arg innodb_buffer_pool_used_pct "${INNODB_BP_USED_PCT:-}" \
     --arg innodb_buffer_pool_dirty_pct "$INNODB_BP_DIRTY_PCT" \
     --arg bind_address "$BIND_ADDRESS" \
     --arg skip_networking "$SKIP_NETWORKING" \
@@ -916,6 +932,8 @@ if [ "$JSON" -eq 1 ]; then
       innodb_flush_method:$innodb_flush_method,
       innodb_log_waits:$innodb_log_waits,
       innodb_log_write_requests:$innodb_log_write_requests,
+      innodb_log_writes:$innodb_log_writes,
+      innodb_log_write_efficiency_pct:$innodb_log_write_efficiency_pct,
       innodb_os_log_fsyncs:$innodb_os_log_fsyncs,
       innodb_os_log_written:$innodb_os_log_written,
       innodb_buffer_pool_pages_total:$innodb_buffer_pool_pages_total,
@@ -924,6 +942,7 @@ if [ "$JSON" -eq 1 ]; then
       innodb_buffer_pool_bytes_data:$innodb_buffer_pool_bytes_data,
       innodb_buffer_pool_bytes_free:$innodb_buffer_pool_bytes_free,
       innodb_buffer_pool_free_pct:$innodb_buffer_pool_free_pct,
+      innodb_buffer_pool_used_pct:$innodb_buffer_pool_used_pct,
       innodb_buffer_pool_dirty_pct:$innodb_buffer_pool_dirty_pct,
       bind_address:$bind_address,
       skip_networking:$skip_networking,
@@ -1257,6 +1276,11 @@ elif [ "$(num "$INNODB_LOG_FILE_SIZE")" -gt 0 ]; then
 fi
 
 [ -n "$INNODB_LOG_WRITE_REQ" ] && info "Innodb_log_write_requests: $INNODB_LOG_WRITE_REQ"
+[ -n "$INNODB_LOG_WRITES" ] && info "Innodb_log_writes:         $INNODB_LOG_WRITES"
+if [ -n "${INNODB_LOG_WRITE_EFF_PCT:-}" ]; then
+  info "InnoDB log write efficiency: ${INNODB_LOG_WRITE_EFF_PCT}%"
+  [ "$(num "$INNODB_LOG_WRITE_EFF_PCT")" -lt 90 ] && warn "Low InnoDB log write efficiency (${INNODB_LOG_WRITE_EFF_PCT}%)" || true
+fi
 [ -n "$INNODB_LOG_WAITS" ] && info "Innodb_log_waits:          $INNODB_LOG_WAITS"
 [ "$(num "$INNODB_LOG_WAITS")" -gt 0 ] && warn "InnoDB log waits detected ($INNODB_LOG_WAITS) - consider larger innodb_log_buffer_size or faster disk" || true
 
@@ -1264,6 +1288,7 @@ fi
 if [ "$(num "$INNODB_BP_PAGES_TOTAL")" -gt 0 ]; then
   info "Innodb_buffer_pool_pages_total: $INNODB_BP_PAGES_TOTAL"
   info "Innodb_buffer_pool_pages_free:  $INNODB_BP_PAGES_FREE (${INNODB_BP_FREE_PCT}% free)"
+  [ -n "${INNODB_BP_USED_PCT:-}" ] && info "InnoDB buffer used:            ${INNODB_BP_USED_PCT}%" || true
   if [ "$(num "$INNODB_BP_PAGES_DIRTY")" -gt 0 ]; then
     info "Innodb_buffer_pool_pages_dirty: $INNODB_BP_PAGES_DIRTY (${INNODB_BP_DIRTY_PCT}% dirty)"
     [ "$(num "$INNODB_BP_DIRTY_PCT")" -ge 50 ] && warn "High dirty pages in buffer pool (${INNODB_BP_DIRTY_PCT}%)" || true
