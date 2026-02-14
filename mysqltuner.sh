@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.9.0-devel"
+VERSION="3.10.0-devel"
 
 usage() {
   cat <<USAGE
@@ -725,7 +725,7 @@ fi
 
 # Memory estimate (best-effort)
 RAM_TOTAL=$(mem_total_bytes)
-GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SIZE")" -v c="$(num "$QCACHE_SIZE")" -v d="$(num "$MAX_TMP_TABLE_SIZE")" 'BEGIN{printf "%d", a+b+c+d}')
+GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SIZE")" -v c="$(num "$QCACHE_SIZE")" -v d="$(num "$MAX_TMP_TABLE_SIZE")" -v e="$(num "$INNODB_LOG_BUFFER_SIZE")" 'BEGIN{printf "%d", a+b+c+d+e}')
 PER_THREAD_BUFFERS=$(awk -v a="$(num "$READ_BUFFER_SIZE")" -v b="$(num "$READ_RND_BUFFER_SIZE")" -v c="$(num "$SORT_BUFFER_SIZE")" -v d="$(num "$JOIN_BUFFER_SIZE")" -v e="$(num "$THREAD_STACK")" -v f="$(num "$BINLOG_CACHE_SIZE")" 'BEGIN{printf "%d", a+b+c+d+e+f}')
 MAX_MEM=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mc="$(num "$MAX_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mc)}')
 MAX_MEM_AT_MAX_USED=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mu="$(num "$MAX_USED_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mu)}')
@@ -911,6 +911,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg ram_total_bytes "$RAM_TOTAL" \
     --arg global_buffers_bytes "$GLOBAL_BUFFERS" \
     --arg max_tmp_table_size "$MAX_TMP_TABLE_SIZE" \
+    --arg innodb_log_buffer_size "$INNODB_LOG_BUFFER_SIZE" \
     --arg per_thread_buffers_bytes "$PER_THREAD_BUFFERS" \
     --arg max_memory_estimate_bytes "$MAX_MEM" \
     --arg max_memory_at_max_used_bytes "$MAX_MEM_AT_MAX_USED" \
@@ -1072,6 +1073,7 @@ if [ "$JSON" -eq 1 ]; then
       ram_total_bytes:$ram_total_bytes,
       global_buffers_bytes:$global_buffers_bytes,
       max_tmp_table_size:$max_tmp_table_size,
+      innodb_log_buffer_size:$innodb_log_buffer_size,
       per_thread_buffers_bytes:$per_thread_buffers_bytes,
       max_memory_estimate_bytes:$max_memory_estimate_bytes,
       max_memory_at_max_used_bytes:$max_memory_at_max_used_bytes,
@@ -1224,6 +1226,7 @@ info "innodb_buffer_pool_size: $(bytes_h "$INNODB_BP_SIZE")"
 info "query_cache_size:        $(bytes_h "$QCACHE_SIZE")"
 info "Global buffers:          $(bytes_h "$GLOBAL_BUFFERS")"
 info "  max_tmp_table_size:    $(bytes_h "$MAX_TMP_TABLE_SIZE")"
+info "  innodb_log_buffer_size: $(bytes_h "$INNODB_LOG_BUFFER_SIZE")"
 info "Per-thread buffers:      $(bytes_h "$PER_THREAD_BUFFERS")"
 info "  read_buffer_size:      $(bytes_h "$READ_BUFFER_SIZE")"
 info "  read_rnd_buffer_size:  $(bytes_h "$READ_RND_BUFFER_SIZE")"
