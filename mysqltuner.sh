@@ -2045,7 +2045,8 @@ warn "Next: implement more MySQLTuner-perl checks for feature parity."
 mysqltuner_emit_json() {
   # Build recommendation arrays from accumulated warn/ok messages
   RECOMMENDATIONS_JSON=$(printf '%s\n' "$REC_WARN" | awk 'NF{print}' | jq -Rsc 'split("\n") | map(select(length>0))')
-  NOTES_JSON=$(printf '%s\n' "$REC_OK" | awk 'NF{print}' | jq -Rsc 'split("\n") | map(select(length>0))')
+  # REC_OK contains literal "\\n" sequences (because ok() appends \\n). Split on that.
+  NOTES_JSON=$(printf '%s\n' "$REC_OK" | awk 'NF{print}' | jq -Rsc 'split("\\\\n") | map(select(length>0))')
 
     jq -n \
     --arg version "$SERVER_VERSION" \
