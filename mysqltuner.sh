@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="1.0.0-devel"
+VERSION="1.1.0-devel"
 
 usage() {
   cat <<USAGE
@@ -23,6 +23,8 @@ Connection options:
 
 Security/data options:
   --cvefile <path>         (default: ./vulnerabilities.csv if present)
+  --passwordfile <path>    (default: ./basic_passwords.txt if present; else /usr/share/mysqltuner/basic_passwords.txt)
+  --max-password-checks <n>  (default: 500)
 
 Output options:
   --silent
@@ -54,6 +56,8 @@ cleanup() {
 # ---- Argument parsing (POSIX-compatible) -----------------------------------
 HOST=""; PORT=""; SOCKET=""; USER=""; PASS=""; DEFAULTS_FILE=""; SILENT=0; JSON=0
 CVEFILE=""
+PASSWORDFILE=""
+MAX_PASSWORD_CHECKS=500
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -66,6 +70,8 @@ while [ $# -gt 0 ]; do
     --pass|-p|--password) shift; PASS="${1-}" ;;
     --defaults-file) shift; DEFAULTS_FILE="${1-}" ;;
     --cvefile) shift; CVEFILE="${1-}" ;;
+    --passwordfile) shift; PASSWORDFILE="${1-}" ;;
+    --max-password-checks) shift; MAX_PASSWORD_CHECKS="${1-}" ;;
     --silent) SILENT=1 ;;
     --json) JSON=1 ;;
     --) shift; break ;;
@@ -151,9 +157,7 @@ ok()      { [ "$SILENT" -eq 1 ] && return 0; echo "[OK]   $*"; }
 
 # ---- Version parsing --------------------------------------------------------
 parse_semver3() {
-  # $1: version string -> prints "major minor micro"
   v="$1"
-  # keep only leading numeric part with dots
   v=$(printf "%s" "$v" | tr -cd '0123456789.' | awk -F. '{print $1"."$2"."$3}')
   maj=$(printf "%s" "$v" | awk -F. '{print $1}')
   min=$(printf "%s" "$v" | awk -F. '{print $2}')
@@ -164,19 +168,13 @@ parse_semver3() {
 
 # ---- CVE checks ------------------------------------------------------------
 check_cves() {
-  # Uses global: CVEFILE, MYSQL_VER_MAJ/MIN/MIC
   [ -z "$CVEFILE" ] && return 0
   [ ! -f "$CVEFILE" ] && return 0
 
   cvefound=0
-  # shellcheck disable=SC2034
   CVE_LIST_JSON="[]"
 
-  # Read semi-colon separated CSV
-  # Expected indexes (based on upstream):
-  # ...;major;minor;micro;cve_id;...;description
   while IFS=';' read -r f0 f1 f2 f3 f4 f5 f6 rest; do
-    # skip empty/comment
     [ -z "${f4:-}" ] && continue
 
     maj=$(num "${f1:-0}")
@@ -186,8 +184,6 @@ check_cves() {
     [ "$maj" -ne "$MYSQL_VER_MAJ" ] && continue
     [ "$min" -ne "$MYSQL_VER_MIN" ] && continue
 
-    # If CVE affects <= version micro and our micro is <= that threshold
-    # Upstream logic: if (cve_micro >= mysql_micro) => affected
     if [ "$mic" -ge "$MYSQL_VER_MIC" ]; then
       cve_id="$f4"
       desc="$f6"
@@ -202,6 +198,67 @@ check_cves() {
   done <"$CVEFILE"
 
   CVE_FOUND="$cvefound"
+}
+
+# ---- Weak password checks (MySQL < 8 only, best-effort) ---------------------
+check_weak_passwords_pre8() {
+  # Requires: mysql.user readable AND PASSWORD() function available.
+  # We only run this when major version < 8.
+  WEAK_PASSWORD_HITS=0
+  WEAK_PASSWORD_USERS_JSON="[]"
+
+  [ -z "$PASSWORDFILE" ] && return 0
+  [ ! -f "$PASSWORDFILE" ] && return 0
+  [ "$MYSQL_VER_MAJ" -ge 8 ] && return 0
+  [ "${MYSQL_USER_READABLE:-no}" != "yes" ] && return 0
+
+  # Determine password column name for hashing comparison
+  PASS_COL="$USER_COL4"
+  # In some installs plugin column may exist but password column differs.
+  # We'll assume col4 is the hash column (authentication_string or password).
+
+  n=0
+  # Read password list; strip CR and whitespace; skip empties.
+  while IFS= read -r line; do
+    p=$(printf "%s" "$line" | tr -d '\r' | tr -d ' \t')
+    [ -z "$p" ] && continue
+
+    n=$((n + 1))
+    [ "$n" -gt "$(num "$MAX_PASSWORD_CHECKS")" ] && break
+
+    # Escape single quotes for SQL literal
+    psql=$(printf "%s" "$p" | awk '{gsub(/\047/,"\\\047"); printf "%s", $0}')
+
+    # Check plain, UPPER, Capitalize variants
+    q="SELECT CONCAT(user,'@',host) FROM mysql.user WHERE ${PASS_COL} = PASSWORD('${psql}') OR ${PASS_COL} = PASSWORD(UPPER('${psql}')) OR ${PASS_COL} = PASSWORD(CONCAT(UPPER(LEFT('${psql}',1)), SUBSTRING('${psql}',2,LENGTH('${psql}'))));"
+
+    hits=$(mysql_query_silent "$q" | tr -d '\r' || true)
+    if [ -n "$hits" ]; then
+      WEAK_PASSWORD_HITS=$((WEAK_PASSWORD_HITS + 1))
+      if [ "$JSON" -eq 1 ]; then
+        # store each user hit
+        while IFS= read -r u; do
+          [ -z "$u" ] && continue
+          WEAK_PASSWORD_USERS_JSON=$(printf '%s' "$WEAK_PASSWORD_USERS_JSON" | jq -c --arg user "$u" --arg pass "$p" '. + [{user:$user, pass:$pass}]')
+        done <<EOF
+$hits
+EOF
+      else
+        # human output
+        while IFS= read -r u; do
+          [ -z "$u" ] && continue
+          warn "User '$u' is using weak password: $p (or case variant)"
+        done <<EOF
+$hits
+EOF
+      fi
+    fi
+
+    # mild pacing: FLUSH HOSTS every 100 attempts (matches upstream idea)
+    if [ $((n % 100)) -eq 0 ]; then
+      mysql_query_silent "FLUSH HOSTS;" >/dev/null 2>&1 || true
+    fi
+  done <"$PASSWORDFILE"
 }
 
 # ---- Core collection -------------------------------------------------------
@@ -221,9 +278,17 @@ SERVER_COMMENT=$(kv_get "$VARS_TSV" version_comment | tr -d '\r')
 SERVER_FLAVOR="mysql"
 case "$SERVER_VERSION" in *MariaDB*) SERVER_FLAVOR="mariadb" ;; esac
 
-# Default cvefile if not provided
+# Default files if not provided
 if [ -z "$CVEFILE" ] && [ -f ./vulnerabilities.csv ]; then
   CVEFILE=./vulnerabilities.csv
+fi
+
+if [ -z "$PASSWORDFILE" ]; then
+  if [ -f ./basic_passwords.txt ]; then
+    PASSWORDFILE=./basic_passwords.txt
+  elif [ -f /usr/share/mysqltuner/basic_passwords.txt ]; then
+    PASSWORDFILE=/usr/share/mysqltuner/basic_passwords.txt
+  fi
 fi
 
 set -- $(parse_semver3 "$SERVER_VERSION")
@@ -294,10 +359,24 @@ GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SI
 PER_THREAD_BUFFERS=$(awk -v a="$(num "$READ_BUFFER_SIZE")" -v b="$(num "$READ_RND_BUFFER_SIZE")" -v c="$(num "$SORT_BUFFER_SIZE")" -v d="$(num "$JOIN_BUFFER_SIZE")" -v e="$(num "$THREAD_STACK")" 'BEGIN{printf "%d", a+b+c+d+e}')
 MAX_MEM=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mc="$(num "$MAX_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mc)}')
 
+# Try to read mysql.user (may fail if no privileges)
+USER_ROWS=$(mysql_query_silent "SELECT user,host,plugin,authentication_string FROM mysql.user" 2>/dev/null || true)
+USER_COL4="authentication_string"
+if [ -z "$USER_ROWS" ]; then
+  USER_ROWS=$(mysql_query_silent "SELECT user,host,plugin,password FROM mysql.user" 2>/dev/null || true)
+  USER_COL4="password"
+fi
+MYSQL_USER_READABLE="$( [ -n "$USER_ROWS" ] && echo yes || echo no )"
+
 # Best-effort CVE scan
 CVE_FOUND=0
 CVE_LIST_JSON="[]"
 check_cves
+
+# Best-effort weak password scan (pre-MySQL8)
+WEAK_PASSWORD_HITS=0
+WEAK_PASSWORD_USERS_JSON="[]"
+check_weak_passwords_pre8
 
 # ---- Output (JSON) ---------------------------------------------------------
 if [ "$JSON" -eq 1 ]; then
@@ -328,12 +407,18 @@ if [ "$JSON" -eq 1 ]; then
     --arg have_ssl "$HAVE_SSL" \
     --arg performance_schema "$PERFORMANCE_SCHEMA" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
+    --arg mysql_user_readable "$MYSQL_USER_READABLE" \
+    --arg mysql_user_col4 "$USER_COL4" \
+    --arg passwordfile "$PASSWORDFILE" \
+    --arg max_password_checks "$MAX_PASSWORD_CHECKS" \
     --arg ram_total_bytes "$RAM_TOTAL" \
     --arg global_buffers_bytes "$GLOBAL_BUFFERS" \
     --arg per_thread_buffers_bytes "$PER_THREAD_BUFFERS" \
     --arg max_memory_estimate_bytes "$MAX_MEM" \
     --arg cve_found "$CVE_FOUND" \
     --argjson cve_list "$CVE_LIST_JSON" \
+    --arg weak_password_hits "$WEAK_PASSWORD_HITS" \
+    --argjson weak_password_users "$WEAK_PASSWORD_USERS_JSON" \
     '{
       version:$version,
       flavor:$flavor,
@@ -361,12 +446,18 @@ if [ "$JSON" -eq 1 ]; then
       have_ssl:$have_ssl,
       performance_schema:$performance_schema,
       max_allowed_packet:$max_allowed_packet,
+      mysql_user_readable:$mysql_user_readable,
+      mysql_user_col4:$mysql_user_col4,
+      passwordfile:$passwordfile,
+      max_password_checks:$max_password_checks,
       ram_total_bytes:$ram_total_bytes,
       global_buffers_bytes:$global_buffers_bytes,
       per_thread_buffers_bytes:$per_thread_buffers_bytes,
       max_memory_estimate_bytes:$max_memory_estimate_bytes,
       cve_found:$cve_found,
-      cve_list:$cve_list
+      cve_list:$cve_list,
+      weak_password_hits:$weak_password_hits,
+      weak_password_users:$weak_password_users
     }'
   exit 0
 fi
@@ -390,6 +481,24 @@ elif [ "$CVE_FOUND" -eq 0 ]; then
   ok "NO SECURITY CVE FOUND FOR YOUR VERSION"
 else
   warn "$CVE_FOUND CVE(s) found for your MySQL release. Consider upgrading."
+fi
+
+section "Weak Passwords (dictionary, best-effort)"
+if [ -z "$PASSWORDFILE" ]; then
+  info "Skipped: no password file found (use --passwordfile)"
+elif [ ! -f "$PASSWORDFILE" ]; then
+  info "Skipped: password file not found ($PASSWORDFILE)"
+elif [ "${MYSQL_USER_READABLE}" != "yes" ]; then
+  info "Skipped: mysql.user not readable with current credentials"
+elif [ "$MYSQL_VER_MAJ" -ge 8 ]; then
+  info "Skipped: MySQL 8+ (PASSWORD() removed; implement different method later)"
+else
+  info "Password list: $PASSWORDFILE (max checks: $MAX_PASSWORD_CHECKS)"
+  if [ "$WEAK_PASSWORD_HITS" -eq 0 ]; then
+    ok "No weak passwords detected (best-effort)"
+  else
+    warn "Weak password hits: $WEAK_PASSWORD_HITS (see warnings above)"
+  fi
 fi
 
 section "Throughput"
@@ -481,6 +590,6 @@ section "Security (basic)"
 [ "$REQUIRE_SECURE_TRANSPORT" = "OFF" ] && warn "require_secure_transport is OFF (consider ON if you require TLS)" || true
 
 ok "Collected: SHOW GLOBAL VARIABLES/STATUS"
-warn "Next: implement full MySQLTuner-perl checks for feature parity."
+warn "Next: implement more MySQLTuner-perl checks for feature parity."
 
 exit 0
