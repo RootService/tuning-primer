@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.31.1-devel"
+VERSION="3.32.0-devel"
 
 usage() {
   cat <<USAGE
@@ -552,6 +552,19 @@ EMPTY_SCHEMAS_COUNT=$(printf '%s' "$EMPTY_SCHEMAS_JSON" | jq -r 'length')
 # 9) nullable columns count (datatype optimization, best-effort)
 NULLABLE_COLS_COUNT=$(mysql_query_silent "SELECT COUNT(*) FROM information_schema.columns WHERE is_nullable='YES' AND table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" | head -n 1 | tr -d '\r')
 
+# 10) naming conventions (best-effort)
+# table naming: plural (very basic) and camelCase
+NAMING_TABLE_ISSUES_JSON=$(mysql_query_silent "SELECT table_schema, table_name FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1]} | . + {plural:((.table|test("[^s]s$";"i")) and (.table|test("status|address|glass|process";"i")|not)), camel:((.table|test("[a-z][A-Z]")))} | select(.plural or .camel)]')
+NAMING_TABLE_ISSUES_COUNT=$(printf '%s' "$NAMING_TABLE_ISSUES_JSON" | jq -r 'length')
+
+# column naming: camelCase, boolean prefix, datetime suffix
+NAMING_COL_ISSUES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name, data_type, column_type FROM information_schema.columns WHERE table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], data_type:.[3], column_type:.[4]} | . + {camel:((.column|test("[a-z][A-Z]"))), bool_like:((.column_type|test("tinyint\\(1\\)";"i")) or (.data_type|test("bool";"i"))), bool_bad:( ((.column_type|test("tinyint\\(1\\)";"i")) or (.data_type|test("bool";"i"))) and ((.column|test("^(is_|has_|was_|had_)";"i"))|not) ), dt_like:(.data_type|test("date|time";"i")), dt_bad:((.data_type|test("date|time";"i")) and ((.column|test("(_at|_date|_time)$";"i"))|not))} | select(.camel or .bool_bad or .dt_bad)]')
+NAMING_COL_ISSUES_COUNT=$(printf '%s' "$NAMING_COL_ISSUES_JSON" | jq -r 'length')
+
+# 11) non-utf8 columns (best-effort)
+NON_UTF8_COLS_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name, character_set_name, collation_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND (character_set_name IS NOT NULL OR collation_name IS NOT NULL) AND (character_set_name NOT LIKE 'utf8%' OR collation_name NOT LIKE 'utf8%');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], charset:.[3], collation:.[4], data_type:.[5], max_len:.[6]}]')
+NON_UTF8_COLS_COUNT=$(printf '%s' "$NON_UTF8_COLS_JSON" | jq -r 'length')
+
 # MyISAM / key buffer metrics
 KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
 KEY_READS=$(kv_get "$STATUS_TSV" Key_reads)
@@ -1029,6 +1042,12 @@ if [ "$JSON" -eq 1 ]; then
     --arg empty_schemas_count "$EMPTY_SCHEMAS_COUNT" \
     --argjson empty_schemas "$EMPTY_SCHEMAS_JSON" \
     --arg nullable_cols_count "$NULLABLE_COLS_COUNT" \
+    --arg naming_table_issues_count "$NAMING_TABLE_ISSUES_COUNT" \
+    --argjson naming_table_issues "$NAMING_TABLE_ISSUES_JSON" \
+    --arg naming_col_issues_count "$NAMING_COL_ISSUES_COUNT" \
+    --argjson naming_col_issues "$NAMING_COL_ISSUES_JSON" \
+    --arg non_utf8_cols_count "$NON_UTF8_COLS_COUNT" \
+    --argjson non_utf8_cols "$NON_UTF8_COLS_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1230,6 +1249,12 @@ if [ "$JSON" -eq 1 ]; then
       empty_schemas_count:$empty_schemas_count,
       empty_schemas:$empty_schemas,
       nullable_cols_count:$nullable_cols_count,
+      naming_table_issues_count:$naming_table_issues_count,
+      naming_table_issues:$naming_table_issues,
+      naming_col_issues_count:$naming_col_issues_count,
+      naming_col_issues:$naming_col_issues,
+      non_utf8_cols_count:$non_utf8_cols_count,
+      non_utf8_cols:$non_utf8_cols,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1387,6 +1412,22 @@ fi
 
 info "Columns with NULL enabled: $NULLABLE_COLS_COUNT"
 [ "$(num "$NULLABLE_COLS_COUNT")" -gt 20 ] && warn "There are $NULLABLE_COLS_COUNT columns with NULL enabled. Consider using NOT NULL where possible." || true
+
+section "Naming Conventions"
+info "Table naming issues:  $NAMING_TABLE_ISSUES_COUNT"
+if [ "$(num "$NAMING_TABLE_ISSUES_COUNT")" -gt 0 ]; then
+  printf '%s' "$NAMING_TABLE_ISSUES_JSON" | jq -r '.[:10][] | "[WARN] Table " + .schema + "." + .table + ": " + (if .plural then "plural name" else "" end) + (if (.plural and .camel) then ", " else "" end) + (if .camel then "non-snake_case" else "" end)'
+fi
+info "Column naming issues: $NAMING_COL_ISSUES_COUNT"
+if [ "$(num "$NAMING_COL_ISSUES_COUNT")" -gt 0 ]; then
+  printf '%s' "$NAMING_COL_ISSUES_JSON" | jq -r '.[:10][] | "[INFO] Column " + .schema + "." + .table + "." + .column + ": " + (if .camel then "non-snake_case" else "" end) + (if (.camel and .bool_bad) then ", " else "" end) + (if .bool_bad then "bool missing prefix" else "" end) + (if ((.camel or .bool_bad) and .dt_bad) then ", " else "" end) + (if .dt_bad then "datetime missing suffix" else "" end)'
+fi
+
+section "Charset / Collation"
+info "Non-UTF8 character columns: $NON_UTF8_COLS_COUNT"
+if [ "$(num "$NON_UTF8_COLS_COUNT")" -gt 0 ]; then
+  printf '%s' "$NON_UTF8_COLS_JSON" | jq -r '.[:10][] | "[WARN] Non-UTF8: " + .schema + "." + .table + "." + .column + " charset=" + (.charset//"") + " collation=" + (.collation//"")'
+fi
 
 section "Replication"
 info "Galera Synchronous replication: $HAVE_GALERA"
