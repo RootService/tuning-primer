@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="2.6.0-devel"
+VERSION="2.7.0-devel"
 
 usage() {
   cat <<USAGE
@@ -398,6 +398,8 @@ THREADS_CONNECTED=$(kv_get "$STATUS_TSV" Threads_connected)
 THREADS_RUNNING=$(kv_get "$STATUS_TSV" Threads_running)
 THREADS_CREATED=$(kv_get "$STATUS_TSV" Threads_created)
 CONNECTIONS=$(kv_get "$STATUS_TSV" Connections)
+BYTES_RECEIVED=$(kv_get "$STATUS_TSV" Bytes_received)
+BYTES_SENT=$(kv_get "$STATUS_TSV" Bytes_sent)
 ABORTED_CONNECTS=$(kv_get "$STATUS_TSV" Aborted_connects)
 ABORTED_CLIENTS=$(kv_get "$STATUS_TSV" Aborted_clients)
 
@@ -522,9 +524,14 @@ PERFORMANCE_SCHEMA=$(kv_get "$VARS_TSV" performance_schema)
 
 # Derived metrics
 QPS=$(rate_per_s "$QUESTIONS" "$UPTIME_S")
+CPS=$(rate_per_s "$CONNECTIONS" "$UPTIME_S")
 ABORT_PCT=$(pct "$ABORTED_CONNECTS" "$CONNECTIONS")
 ABORTED_CLIENTS_PCT=$(pct "$ABORTED_CLIENTS" "$CONNECTIONS")
 OPENED_TABLES_PS=$(rate_per_s "$OPENED_TABLES" "$UPTIME_S")
+
+# Network throughput (best-effort)
+BYTES_RECEIVED_PS=$(rate_per_s "$BYTES_RECEIVED" "$UPTIME_S")
+BYTES_SENT_PS=$(rate_per_s "$BYTES_SENT" "$UPTIME_S")
 
 # Thread cache hit rate (best-effort)
 conn=$(num "$CONNECTIONS")
@@ -625,6 +632,11 @@ if [ "$JSON" -eq 1 ]; then
     --arg version_comment "$SERVER_COMMENT" \
     --arg uptime "$UPTIME" \
     --arg qps "$QPS" \
+    --arg cps "$CPS" \
+    --arg bytes_received "$BYTES_RECEIVED" \
+    --arg bytes_sent "$BYTES_SENT" \
+    --arg bytes_received_per_s "$BYTES_RECEIVED_PS" \
+    --arg bytes_sent_per_s "$BYTES_SENT_PS" \
     --arg max_connections "$MAX_CONNECTIONS" \
     --arg max_used_connections "$MAX_USED_CONNECTIONS" \
     --arg max_used_connections_pct "${mupct:-}" \
@@ -743,6 +755,11 @@ if [ "$JSON" -eq 1 ]; then
       version_comment:$version_comment,
       uptime:$uptime,
       qps:$qps,
+      cps:$cps,
+      bytes_received:$bytes_received,
+      bytes_sent:$bytes_sent,
+      bytes_received_per_s:$bytes_received_per_s,
+      bytes_sent_per_s:$bytes_sent_per_s,
       max_connections:$max_connections,
       max_used_connections:$max_used_connections,
       max_used_connections_pct:$max_used_connections_pct,
@@ -926,7 +943,12 @@ else
 fi
 
 section "Throughput"
-info "Questions: $QUESTIONS (QPS: $QPS)"
+info "Questions:   $QUESTIONS (QPS: $QPS)"
+info "Connections: $CONNECTIONS (CPS: $CPS)"
+
+section "Network Throughput"
+info "Bytes_received: $BYTES_RECEIVED (~${BYTES_RECEIVED_PS} B/s)"
+info "Bytes_sent:     $BYTES_SENT (~${BYTES_SENT_PS} B/s)"
 
 section "Connections"
 info "max_connections:      $MAX_CONNECTIONS"
