@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="2.2.0-devel"
+VERSION="2.3.0-devel"
 
 usage() {
   cat <<USAGE
@@ -441,6 +441,9 @@ TABLE_OPEN_CACHE=$(kv_get "$VARS_TSV" table_open_cache)
 OPENED_TABLES=$(kv_get "$STATUS_TSV" Opened_tables)
 OPENED_TABLE_DEFS=$(kv_get "$STATUS_TSV" Opened_table_definitions)
 
+TABLE_LOCKS_IMMEDIATE=$(kv_get "$STATUS_TSV" Table_locks_immediate)
+TABLE_LOCKS_WAITED=$(kv_get "$STATUS_TSV" Table_locks_waited)
+
 MAX_ALLOWED_PACKET=$(kv_get "$VARS_TSV" max_allowed_packet)
 
 # Files / limits
@@ -534,6 +537,16 @@ else
   QCACHE_HIT_PCT=""
 fi
 
+# Table lock waited percent (best-effort)
+tli=$(num "$TABLE_LOCKS_IMMEDIATE")
+tlw=$(num "$TABLE_LOCKS_WAITED")
+tlt=$((tli + tlw))
+if [ "$tlt" -gt 0 ]; then
+  TABLE_LOCKS_WAITED_PCT=$(pct "$tlw" "$tlt")
+else
+  TABLE_LOCKS_WAITED_PCT=""
+fi
+
 # MyISAM key buffer hit rate (best-effort)
 krreq=$(num "$KEY_READ_REQUESTS")
 kr=$(num "$KEY_READS")
@@ -608,6 +621,9 @@ if [ "$JSON" -eq 1 ]; then
     --arg open_files_limit "$OPEN_FILES_LIMIT" \
     --arg open_files "$OPEN_FILES" \
     --arg table_definition_cache "$TABLE_DEF_CACHE" \
+    --arg table_locks_immediate "$TABLE_LOCKS_IMMEDIATE" \
+    --arg table_locks_waited "$TABLE_LOCKS_WAITED" \
+    --arg table_locks_waited_pct "$TABLE_LOCKS_WAITED_PCT" \
     --arg slow_query_log "$SLOW_QUERY_LOG" \
     --arg slow_queries "$SLOW_QUERIES" \
     --arg innodb_buffer_pool_size "$INNODB_BP_SIZE" \
@@ -712,6 +728,9 @@ if [ "$JSON" -eq 1 ]; then
       open_files_limit:$open_files_limit,
       open_files:$open_files,
       table_definition_cache:$table_definition_cache,
+      table_locks_immediate:$table_locks_immediate,
+      table_locks_waited:$table_locks_waited,
+      table_locks_waited_pct:$table_locks_waited_pct,
       slow_query_log:$slow_query_log,
       slow_queries:$slow_queries,
       innodb_buffer_pool_size:$innodb_buffer_pool_size,
@@ -945,6 +964,14 @@ info "Select_full_range_join: $SELECT_FULL_RANGE_JOIN"
 info "Select_range_check:     $SELECT_RANGE_CHECK"
 [ "$(num "$SELECT_FULL_JOIN")" -gt 0 ] && warn "Select_full_join > 0 (joins without indexes detected)" || true
 [ "$(num "$SELECT_RANGE_CHECK")" -gt 0 ] && warn "Select_range_check > 0 (joins without keys in some cases)" || true
+
+section "Table Locks"
+info "Table_locks_immediate: $TABLE_LOCKS_IMMEDIATE"
+info "Table_locks_waited:    $TABLE_LOCKS_WAITED"
+if [ -n "${TABLE_LOCKS_WAITED_PCT:-}" ]; then
+  info "Table locks waited:    ${TABLE_LOCKS_WAITED_PCT}%"
+  [ "$(num "$TABLE_LOCKS_WAITED_PCT")" -ge 1 ] && warn "Table_locks_waited > 0 (contention detected)" || true
+fi
 
 section "Handler (read patterns)"
 info "Handler_read_rnd_next: $HANDLER_READ_RND_NEXT"
