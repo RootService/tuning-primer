@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.31.0-devel"
+VERSION="3.31.1-devel"
 
 usage() {
   cat <<USAGE
@@ -539,7 +539,7 @@ NON_INNODB_TABLES_COUNT=$(printf '%s' "$NON_INNODB_TABLES_JSON" | jq -r 'length'
 
 # 6) unconstrained *_id columns (best-effort)
 UNCONSTRAINED_ID_JSON=$(mysql_query_silent "SELECT c.table_schema, c.table_name, c.column_name FROM information_schema.columns c LEFT JOIN information_schema.key_column_usage k ON c.table_schema = k.table_schema AND c.table_name = k.table_name AND c.column_name = k.column_name AND k.referenced_table_name IS NOT NULL JOIN information_schema.tables t ON c.table_schema=t.table_schema AND c.table_name=t.table_name WHERE c.column_name LIKE '%\\_id' ESCAPE '\\' AND k.column_name IS NULL AND t.table_type='BASE TABLE' AND c.table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2]}]')
-UNCONSTRAINED_ID_COUNT=$(printf '%s' "$UNCONSTRAINED_ID_JSON" | jq -r 'length')
+UNCONSTRAINED_ID_COUNT=$(printf '%s' "$UNCONSTRAINED_ID_JSON" | jq -r '[ .[] | select(.column != (.table + "_id")) ] | length')
 
 # 7) FK delete rule CASCADE (best-effort)
 FK_CASCADE_JSON=$(mysql_query_silent "SELECT rc.constraint_schema, rc.table_name, k.column_name, rc.referenced_table_name, k.referenced_column_name, rc.delete_rule FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage k ON rc.constraint_schema = k.constraint_schema AND rc.constraint_name = k.constraint_name WHERE rc.constraint_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND rc.delete_rule='CASCADE';" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], ref_table:.[3], ref_column:.[4], delete_rule:.[5]}]')
@@ -1371,7 +1371,8 @@ fi
 
 info "Unconstrained *_id columns: $UNCONSTRAINED_ID_COUNT"
 if [ "$(num "$UNCONSTRAINED_ID_COUNT")" -gt 0 ]; then
-  printf '%s' "$UNCONSTRAINED_ID_JSON" | jq -r '.[:10][] | "[WARN] Unconstrained _id: " + .schema + "." + .table + "." + .column'
+  # exclude PKs named ${table}_id (upstream behavior)
+  printf '%s' "$UNCONSTRAINED_ID_JSON" | jq -r '.[] | select(.column != (.table + "_id")) | "[WARN] Unconstrained _id: " + .schema + "." + .table + "." + .column' | head -n 10
 fi
 
 info "FKs with ON DELETE CASCADE: $FK_CASCADE_COUNT"
