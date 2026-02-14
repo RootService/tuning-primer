@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.38.1-devel"
+VERSION="3.39.0-devel"
 
 usage() {
   cat <<USAGE
@@ -646,6 +646,10 @@ DB_COLLATIONS_COUNT=$(printf '%s' "$DB_COLLATIONS_JSON" | jq -r 'length')
 DB_ENGINES_JSON=$(mysql_query_silent "SELECT DISTINCT engine FROM information_schema.tables WHERE engine IS NOT NULL AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY engine;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | .]')
 DB_ENGINES_COUNT=$(printf '%s' "$DB_ENGINES_JSON" | jq -r 'length')
 
+# Per-database breakdown (best-effort)
+DB_BREAKDOWN_JSON=$(mysql_query_silent "SELECT table_schema, IFNULL(SUM(table_rows),0) AS rows, IFNULL(SUM(data_length),0) AS data_bytes, IFNULL(SUM(index_length),0) AS index_bytes, IFNULL(SUM(data_length+index_length),0) AS total_bytes, COUNT(CASE WHEN table_type='BASE TABLE' THEN 1 END) AS tables, COUNT(CASE WHEN table_type='VIEW' THEN 1 END) AS views, COUNT(DISTINCT engine) AS engines, COUNT(DISTINCT table_collation) AS collations FROM information_schema.tables WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys') GROUP BY table_schema ORDER BY total_bytes DESC;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], rows:(.[1]|tonumber), data_bytes:(.[2]|tonumber), index_bytes:(.[3]|tonumber), total_bytes:(.[4]|tonumber), tables:(.[5]|tonumber), views:(.[6]|tonumber), engines:(.[7]|tonumber), collations:(.[8]|tonumber)}]')
+DB_BREAKDOWN_COUNT=$(printf '%s' "$DB_BREAKDOWN_JSON" | jq -r 'length')
+
 # Optional: write upstream-style CSV dumps
 if [ -n "$DUMP_DIR" ]; then
   mkdir -p "$DUMP_DIR" 2>/dev/null || true
@@ -672,6 +676,9 @@ if [ -n "$DUMP_DIR" ]; then
   # databases_summary.csv
   DB_SUMMARY_JSON=$(jq -n --arg databases_count "$DATABASES_COUNT" --arg tables "$DB_TABLES_COUNT" --arg views "$DB_VIEWS_COUNT" --arg indexes "$DB_INDEXES_COUNT" --arg rows "$DB_TOTAL_ROWS" --arg data_bytes "$DB_DATA_BYTES" --arg index_bytes "$DB_INDEX_BYTES" --arg total_bytes "$DB_TOTAL_BYTES" '{databases_count:$databases_count,tables:$tables,views:$views,indexes:$indexes,rows:$rows,data_bytes:$data_bytes,index_bytes:$index_bytes,total_bytes:$total_bytes}')
   printf '%s' "$DB_SUMMARY_JSON" | dump_csv_file "$DUMP_DIR/databases_summary.csv" "Databases,Tables,Views,Indexes,Rows,DataBytes,IndexBytes,TotalBytes" '. | [.databases_count,.tables,.views,.indexes,.rows,.data_bytes,.index_bytes,.total_bytes] | @csv'
+
+  # databases_breakdown.csv
+  printf '%s' "$DB_BREAKDOWN_JSON" | dump_csv_file "$DUMP_DIR/databases_breakdown.csv" "Schema,Tables,Views,Rows,DataBytes,IndexBytes,TotalBytes,Engines,Collations" '.[] | [.schema,.tables,.views,.rows,.data_bytes,.index_bytes,.total_bytes,.engines,.collations] | @csv'
 fi
 
 PK_NAMING_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(.column != "id" and .column != (.table + "_id")) | {schema, table, column}]')
@@ -1205,6 +1212,8 @@ if [ "$JSON" -eq 1 ]; then
     --argjson db_collations "$DB_COLLATIONS_JSON" \
     --arg db_engines_count "$DB_ENGINES_COUNT" \
     --argjson db_engines "$DB_ENGINES_JSON" \
+    --arg db_breakdown_count "$DB_BREAKDOWN_COUNT" \
+    --argjson db_breakdown "$DB_BREAKDOWN_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1445,6 +1454,8 @@ if [ "$JSON" -eq 1 ]; then
       db_collations:$db_collations,
       db_engines_count:$db_engines_count,
       db_engines:$db_engines,
+      db_breakdown_count:$db_breakdown_count,
+      db_breakdown:$db_breakdown,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1670,6 +1681,10 @@ info "User databases: $DATABASES_COUNT"
 info "All user schemas: tables=$DB_TABLES_COUNT views=$DB_VIEWS_COUNT indexes=$DB_INDEXES_COUNT"
 info "All user schemas: rows=$DB_TOTAL_ROWS data=$(bytes_h "$DB_DATA_BYTES") index=$(bytes_h "$DB_INDEX_BYTES") total=$(bytes_h "$DB_TOTAL_BYTES")"
 info "Charsets: $DB_CHARSETS_COUNT  Collations: $DB_COLLATIONS_COUNT  Engines: $DB_ENGINES_COUNT"
+if [ "$(num "$DB_BREAKDOWN_COUNT")" -gt 0 ]; then
+  info "Per-database breakdown: $DB_BREAKDOWN_COUNT"
+  printf '%s' "$DB_BREAKDOWN_JSON" | jq -r '.[:10][] | "[INFO] DB " + .schema + ": tables=" + (.tables|tostring) + " views=" + (.views|tostring) + " rows=" + (.rows|tostring) + " total=" + (.total_bytes|tostring)' 
+fi
 
 section "Replication"
 info "Galera Synchronous replication: $HAVE_GALERA"
