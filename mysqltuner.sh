@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.20.0-devel"
+VERSION="3.21.0-devel"
 
 usage() {
   cat <<USAGE
@@ -554,6 +554,8 @@ LOG_BIN=$(kv_get "$VARS_TSV" log_bin)
 BINLOG_FORMAT=$(kv_get "$VARS_TSV" binlog_format)
 SYNC_BINLOG=$(kv_get "$VARS_TSV" sync_binlog)
 BINLOG_CACHE_SIZE=$(kv_get "$VARS_TSV" binlog_cache_size)
+GTID_MODE=$(kv_get "$VARS_TSV" gtid_mode)
+GTID_CURRENT_POS=$(kv_get "$VARS_TSV" gtid_current_pos)
 MAX_CONNECT_ERRORS=$(kv_get "$VARS_TSV" max_connect_errors)
 
 # Thread pool (best-effort)
@@ -904,6 +906,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg binlog_cache_use "$BINLOG_CACHE_USE" \
     --arg binlog_cache_disk_use "$BINLOG_CACHE_DISK_USE" \
     --arg binlog_cache_pct "${BINLOG_CACHE_PCT:-}" \
+    --arg gtid_mode "$GTID_MODE" \
+    --arg gtid_current_pos "$GTID_CURRENT_POS" \
     --arg max_connect_errors "$MAX_CONNECT_ERRORS" \
     --arg thread_handling "$THREAD_HANDLING" \
     --arg have_threadpool "$HAVE_THREADPOOL" \
@@ -1077,6 +1081,8 @@ if [ "$JSON" -eq 1 ]; then
       binlog_cache_use:$binlog_cache_use,
       binlog_cache_disk_use:$binlog_cache_disk_use,
       binlog_cache_pct:$binlog_cache_pct,
+      gtid_mode:$gtid_mode,
+      gtid_current_pos:$gtid_current_pos,
       max_connect_errors:$max_connect_errors,
       thread_handling:$thread_handling,
       have_threadpool:$have_threadpool,
@@ -1605,9 +1611,22 @@ info "max_allowed_packet: $(bytes_h "$MAX_ALLOWED_PACKET")"
 [ "$(num "$MAX_ALLOWED_PACKET")" -lt 16777216 ] && warn "max_allowed_packet below 16MiB" || ok "max_allowed_packet looks OK"
 
 section "Binary Log"
+if [ "${LOG_BIN:-}" = "OFF" ] || [ "${LOG_BIN:-}" = "0" ]; then
+  info "Binary logging is disabled"
+else
+  # MySQL: gtid_mode; MariaDB: gtid_current_pos
+  gtid_note="OFF"
+  [ -n "$GTID_MODE" ] && gtid_note="$GTID_MODE"
+  [ -n "$GTID_CURRENT_POS" ] && gtid_note="ON"
+  info "Binary logging is enabled (GTID MODE: $gtid_note)"
+fi
+
 [ -n "$LOG_BIN" ] && info "log_bin: $LOG_BIN"
 [ -n "$BINLOG_FORMAT" ] && info "binlog_format: $BINLOG_FORMAT"
 [ -n "$SYNC_BINLOG" ] && info "sync_binlog: $SYNC_BINLOG"
+[ -n "$GTID_MODE" ] && info "gtid_mode: $GTID_MODE"
+[ -n "$GTID_CURRENT_POS" ] && info "gtid_current_pos: $GTID_CURRENT_POS"
+
 [ -n "$BINLOG_CACHE_SIZE" ] && info "binlog_cache_size: $(bytes_h "$BINLOG_CACHE_SIZE")"
 [ -n "$BINLOG_CACHE_USE" ] && info "Binlog_cache_use: $BINLOG_CACHE_USE"
 [ -n "$BINLOG_CACHE_DISK_USE" ] && info "Binlog_cache_disk_use: $BINLOG_CACHE_DISK_USE"
