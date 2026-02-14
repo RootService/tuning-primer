@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.63.1-devel"
+VERSION="3.64.0-devel"
 
 usage() {
   cat <<USAGE
@@ -1639,8 +1639,9 @@ info "Tables with no indexes: $TABLES_NO_INDEX_COUNT"
 info "Worst selectivity indexes: $WORST_SELECTIVITY_COUNT"
 if [ "$(num "$WORST_SELECTIVITY_COUNT")" -gt 0 ]; then
   printf '%s' "$WORST_SELECTIVITY_JSON" | jq -r '.[] | "[INFO] Index: " + .index + "\n +-- COLUMN      : " + .table + "\n +-- NB SEQS     : " + (.seq|tostring) + "\n +-- NB COLS     : " + (.maxcol|tostring) + "\n +-- CARDINALITY : " + (.card|tostring) + " distinct values\n +-- NB ROWS     : " + (.est_rows|tostring) + " rows\n +-- TYPE        : " + (.type//"") + "\n +-- SELECTIVITY : " + (.selectivity_pct|tostring) + "%"' | head -n 40
-  # warn on very low selectivity
-  printf '%s' "$WORST_SELECTIVITY_JSON" | jq -r '.[] | select(.selectivity_pct < 25) | "[WARN] " + .index + " has a low selectivity (" + (.selectivity_pct|tostring) + "%)"' | head -n 10
+  # warn on low selectivity
+  printf '%s' "$WORST_SELECTIVITY_JSON" | jq -r '.[] | select(.selectivity_pct < 25) | "[WARN] " + .index + " has a very low selectivity (" + (.selectivity_pct|tostring) + "%)"' | head -n 10
+  printf '%s' "$WORST_SELECTIVITY_JSON" | jq -r '.[] | select(.selectivity_pct >= 25 and .selectivity_pct < 50) | "[WARN] " + .index + " has a low selectivity (" + (.selectivity_pct|tostring) + "%)"' | head -n 10
 fi
 
 info "Duplicate indexes (same cols/type/unique): $DUPLICATE_INDEXES_COUNT"
@@ -1661,6 +1662,7 @@ info "UNIQUE index redundant to PRIMARY KEY: $UNIQUE_REDUNDANT_PK_COUNT"
 [ "$(num "$SAME_COLS_DIFF_UNIQ_COUNT")" -gt 0 ] && warn "Non-unique indexes detected where an identical UNIQUE index exists. Consider dropping the non-unique ones." || true
 [ "$(num "$REDUNDANT_INDEXES_COUNT")" -gt 0 ] && warn "Redundant prefix indexes detected. Consider dropping narrower ones if covered by wider indexes." || true
 [ "$(num "$UNIQUE_REDUNDANT_PK_COUNT")" -gt 0 ] && warn "UNIQUE indexes duplicating PRIMARY KEY detected. Consider dropping them." || true
+[ "$(num "$WORST_SELECTIVITY_COUNT")" -gt 0 ] && warn "Some indexes have low selectivity. Review them and consider adding more selective leading columns." || true
 
 section "Replication"
 info "Galera Synchronous replication: $HAVE_GALERA"
