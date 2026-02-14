@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="1.6.0-devel"
+VERSION="1.7.0-devel"
 
 usage() {
   cat <<USAGE
@@ -548,6 +548,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg qps "$QPS" \
     --arg max_connections "$MAX_CONNECTIONS" \
     --arg max_used_connections "$MAX_USED_CONNECTIONS" \
+    --arg max_used_connections_pct "${mupct:-}" \
     --arg threads_connected "$THREADS_CONNECTED" \
     --arg threads_running "$THREADS_RUNNING" \
     --arg threads_created "$THREADS_CREATED" \
@@ -626,6 +627,7 @@ if [ "$JSON" -eq 1 ]; then
       qps:$qps,
       max_connections:$max_connections,
       max_used_connections:$max_used_connections,
+      max_used_connections_pct:$max_used_connections_pct,
       threads_connected:$threads_connected,
       threads_running:$threads_running,
       threads_created:$threads_created,
@@ -770,6 +772,14 @@ info "Questions: $QUESTIONS (QPS: $QPS)"
 section "Connections"
 info "max_connections:      $MAX_CONNECTIONS"
 info "Max_used_connections: $MAX_USED_CONNECTIONS"
+
+mc=$(num "$MAX_CONNECTIONS")
+mu=$(num "$MAX_USED_CONNECTIONS")
+if [ "$mc" -gt 0 ] && [ "$mu" -gt 0 ]; then
+  mupct=$(pct "$mu" "$mc")
+  info "Max_used_connections % of max: ${mupct}%"
+  [ "$mupct" -ge 85 ] && warn "Max_used_connections is high (${mupct}% of max_connections)" || true
+fi
 info "Threads_connected:    $THREADS_CONNECTED"
 info "Threads_running:      $THREADS_RUNNING"
 info "Threads_created:      $THREADS_CREATED"
