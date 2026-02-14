@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="1.4.0-devel"
+VERSION="1.5.0-devel"
 
 usage() {
   cat <<USAGE
@@ -413,8 +413,16 @@ TMP_TABLE_SIZE=$(kv_get "$VARS_TSV" tmp_table_size)
 MAX_HEAP_TABLE_SIZE=$(kv_get "$VARS_TSV" max_heap_table_size)
 
 INNODB_BP_SIZE=$(kv_get "$VARS_TSV" innodb_buffer_pool_size)
+INNODB_BP_INSTANCES=$(kv_get "$VARS_TSV" innodb_buffer_pool_instances)
 INNODB_BP_READ_REQ=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_read_requests)
 INNODB_BP_READS=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_reads)
+
+INNODB_FLUSH_LOG_AT_TRX=$(kv_get "$VARS_TSV" innodb_flush_log_at_trx_commit)
+INNODB_LOG_BUFFER_SIZE=$(kv_get "$VARS_TSV" innodb_log_buffer_size)
+INNODB_LOG_FILE_SIZE=$(kv_get "$VARS_TSV" innodb_log_file_size)
+INNODB_REDO_LOG_CAPACITY=$(kv_get "$VARS_TSV" innodb_redo_log_capacity)
+INNODB_FILE_PER_TABLE=$(kv_get "$VARS_TSV" innodb_file_per_table)
+INNODB_FLUSH_METHOD=$(kv_get "$VARS_TSV" innodb_flush_method)
 
 THREAD_CACHE_SIZE=$(kv_get "$VARS_TSV" thread_cache_size)
 TABLE_OPEN_CACHE=$(kv_get "$VARS_TSV" table_open_cache)
@@ -441,6 +449,11 @@ QCACHE_SIZE=$(kv_get "$VARS_TSV" query_cache_size)
 BIND_ADDRESS=$(kv_get "$VARS_TSV" bind_address)
 SKIP_NETWORKING=$(kv_get "$VARS_TSV" skip_networking)
 PORT_VAR=$(kv_get "$VARS_TSV" port)
+
+# Binary log / durability variables
+LOG_BIN=$(kv_get "$VARS_TSV" log_bin)
+BINLOG_FORMAT=$(kv_get "$VARS_TSV" binlog_format)
+SYNC_BINLOG=$(kv_get "$VARS_TSV" sync_binlog)
 
 # Security-related variables
 SKIP_NAME_RESOLVE=$(kv_get "$VARS_TSV" skip_name_resolve)
@@ -525,11 +538,21 @@ if [ "$JSON" -eq 1 ]; then
     --arg slow_query_log "$SLOW_QUERY_LOG" \
     --arg slow_queries "$SLOW_QUERIES" \
     --arg innodb_buffer_pool_size "$INNODB_BP_SIZE" \
+    --arg innodb_buffer_pool_instances "$INNODB_BP_INSTANCES" \
     --arg innodb_buffer_pool_read_requests "$INNODB_BP_READ_REQ" \
     --arg innodb_buffer_pool_reads "$INNODB_BP_READS" \
+    --arg innodb_flush_log_at_trx_commit "$INNODB_FLUSH_LOG_AT_TRX" \
+    --arg innodb_log_buffer_size "$INNODB_LOG_BUFFER_SIZE" \
+    --arg innodb_log_file_size "$INNODB_LOG_FILE_SIZE" \
+    --arg innodb_redo_log_capacity "$INNODB_REDO_LOG_CAPACITY" \
+    --arg innodb_file_per_table "$INNODB_FILE_PER_TABLE" \
+    --arg innodb_flush_method "$INNODB_FLUSH_METHOD" \
     --arg bind_address "$BIND_ADDRESS" \
     --arg skip_networking "$SKIP_NETWORKING" \
     --arg port "$PORT_VAR" \
+    --arg log_bin "$LOG_BIN" \
+    --arg binlog_format "$BINLOG_FORMAT" \
+    --arg sync_binlog "$SYNC_BINLOG" \
     --arg skip_name_resolve "$SKIP_NAME_RESOLVE" \
     --arg local_infile "$LOCAL_INFILE" \
     --arg require_secure_transport "$REQUIRE_SECURE_TRANSPORT" \
@@ -581,11 +604,21 @@ if [ "$JSON" -eq 1 ]; then
       slow_query_log:$slow_query_log,
       slow_queries:$slow_queries,
       innodb_buffer_pool_size:$innodb_buffer_pool_size,
+      innodb_buffer_pool_instances:$innodb_buffer_pool_instances,
       innodb_buffer_pool_read_requests:$innodb_buffer_pool_read_requests,
       innodb_buffer_pool_reads:$innodb_buffer_pool_reads,
+      innodb_flush_log_at_trx_commit:$innodb_flush_log_at_trx_commit,
+      innodb_log_buffer_size:$innodb_log_buffer_size,
+      innodb_log_file_size:$innodb_log_file_size,
+      innodb_redo_log_capacity:$innodb_redo_log_capacity,
+      innodb_file_per_table:$innodb_file_per_table,
+      innodb_flush_method:$innodb_flush_method,
       bind_address:$bind_address,
       skip_networking:$skip_networking,
       port:$port,
+      log_bin:$log_bin,
+      binlog_format:$binlog_format,
+      sync_binlog:$sync_binlog,
       skip_name_resolve:$skip_name_resolve,
       local_infile:$local_infile,
       require_secure_transport:$require_secure_transport,
@@ -738,6 +771,21 @@ fi
 
 section "InnoDB"
 [ -n "$INNODB_BP_SIZE" ] && info "innodb_buffer_pool_size: $(bytes_h "$INNODB_BP_SIZE")"
+[ -n "$INNODB_BP_INSTANCES" ] && info "innodb_buffer_pool_instances: $INNODB_BP_INSTANCES"
+[ -n "$INNODB_FILE_PER_TABLE" ] && info "innodb_file_per_table: $INNODB_FILE_PER_TABLE"
+[ -n "$INNODB_FLUSH_METHOD" ] && info "innodb_flush_method: $INNODB_FLUSH_METHOD"
+[ -n "$INNODB_FLUSH_LOG_AT_TRX" ] && info "innodb_flush_log_at_trx_commit: $INNODB_FLUSH_LOG_AT_TRX"
+[ -n "$INNODB_LOG_BUFFER_SIZE" ] && info "innodb_log_buffer_size: $(bytes_h "$INNODB_LOG_BUFFER_SIZE")"
+
+if [ "$(num "$INNODB_REDO_LOG_CAPACITY")" -gt 0 ]; then
+  info "innodb_redo_log_capacity: $(bytes_h "$INNODB_REDO_LOG_CAPACITY")"
+elif [ "$(num "$INNODB_LOG_FILE_SIZE")" -gt 0 ]; then
+  info "innodb_log_file_size: $(bytes_h "$INNODB_LOG_FILE_SIZE")"
+fi
+
+if [ "${INNODB_FLUSH_LOG_AT_TRX:-}" = "2" ] || [ "${INNODB_FLUSH_LOG_AT_TRX:-}" = "0" ]; then
+  warn "innodb_flush_log_at_trx_commit=$INNODB_FLUSH_LOG_AT_TRX reduces durability"
+fi
 
 bprr=$(num "$INNODB_BP_READ_REQ")
 bpr=$(num "$INNODB_BP_READS")
@@ -771,6 +819,16 @@ ots=$(num "$ots")
 section "Packet Size"
 info "max_allowed_packet: $(bytes_h "$MAX_ALLOWED_PACKET")"
 [ "$(num "$MAX_ALLOWED_PACKET")" -lt 16777216 ] && warn "max_allowed_packet below 16MiB" || ok "max_allowed_packet looks OK"
+
+section "Binary Log"
+[ -n "$LOG_BIN" ] && info "log_bin: $LOG_BIN"
+[ -n "$BINLOG_FORMAT" ] && info "binlog_format: $BINLOG_FORMAT"
+[ -n "$SYNC_BINLOG" ] && info "sync_binlog: $SYNC_BINLOG"
+
+if [ "${LOG_BIN:-}" = "ON" ] && [ "${SYNC_BINLOG:-}" != "" ]; then
+  sb=$(num "$SYNC_BINLOG")
+  [ "$sb" -eq 0 ] && warn "sync_binlog=0 with binary logging reduces durability" || true
+fi
 
 section "Network"
 [ -n "$PORT_VAR" ] && info "port: $PORT_VAR"
