@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.43.0-devel"
+VERSION="3.43.1-devel"
 
 usage() {
   cat <<USAGE
@@ -703,6 +703,7 @@ REDUNDANT_INDEXES_COUNT=$(printf '%s' "$REDUNDANT_INDEXES_JSON" | jq -r 'length'
 # Schema documentation / Mermaid ERD (best-effort; write files only)
 if [ -n "$SCHEMA_DIR" ]; then
   mkdir -p "$SCHEMA_DIR" 2>/dev/null || true
+  mkdir -p "$SCHEMA_DIR/databases" 2>/dev/null || true
 
   NOW_STR=$(date 2>/dev/null || echo "")
   # Schema markdown (overview)
