@@ -579,7 +579,7 @@ JSON_NO_GEN_COUNT=$(printf '%s' "$JSON_NO_GEN_JSON" | jq -r 'length')
 
 # 14b) invisible indexes (MySQL: IS_VISIBLE='NO', MariaDB: IGNORED='YES')
 # We detect MariaDB by VERSION() string containing 'MariaDB'
-case "$MYSQL_VERSION" in
+case "$SERVER_VERSION" in
   *MariaDB*)
     INVISIBLE_IDX_JSON=$(mysql_query_silent "SELECT table_schema, table_name, index_name FROM information_schema.statistics WHERE ignored='YES' AND table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], index:.[2]}]')
     ;;
@@ -593,9 +593,9 @@ INVISIBLE_IDX_COUNT=$(printf '%s' "$INVISIBLE_IDX_JSON" | jq -r 'length')
 # best-effort: only on MySQL >=8.0.16 and non-MariaDB
 CHECK_CONSTRAINTS_JSON='[]'
 CHECK_CONSTRAINTS_COUNT=0
-if [ "$MYSQL_VERSION_MAJOR" -ge 8 ] && [ "$MYSQL_VERSION_MINOR" -ge 0 ]; then
-  if [ "$MYSQL_VERSION_MAJOR" -gt 8 ] || [ "$MYSQL_VERSION_MINOR" -gt 0 ] || [ "$MYSQL_VERSION_PATCH" -ge 16 ]; then
-    case "$MYSQL_VERSION" in
+if [ "$(num "$MYSQL_VER_MAJ")" -ge 8 ] && [ "$(num "$MYSQL_VER_MIN")" -ge 0 ]; then
+  if [ "$(num "$MYSQL_VER_MAJ")" -gt 8 ] || [ "$(num "$MYSQL_VER_MIN")" -gt 0 ] || [ "$(num "$MYSQL_VER_MIC")" -ge 16 ]; then
+    case "$SERVER_VERSION" in
       *MariaDB*) : ;;
       *)
         CHECK_CONSTRAINTS_JSON=$(mysql_query_silent "SELECT constraint_schema, table_name, constraint_name FROM information_schema.table_constraints WHERE constraint_type='CHECK' AND constraint_schema NOT IN ('sys','mysql','performance_schema','information_schema');" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], constraint:.[2]}]')
