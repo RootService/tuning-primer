@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="1.2.0-devel"
+VERSION="1.3.0-devel"
 
 usage() {
   cat <<USAGE
@@ -420,6 +420,12 @@ OPENED_TABLES=$(kv_get "$STATUS_TSV" Opened_tables)
 
 MAX_ALLOWED_PACKET=$(kv_get "$VARS_TSV" max_allowed_packet)
 
+# MyISAM / key buffer metrics
+KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
+KEY_READS=$(kv_get "$STATUS_TSV" Key_reads)
+KEY_WRITE_REQUESTS=$(kv_get "$STATUS_TSV" Key_write_requests)
+KEY_WRITES=$(kv_get "$STATUS_TSV" Key_writes)
+
 # Memory-related vars (for rough estimates)
 KEY_BUFFER_SIZE=$(kv_get "$VARS_TSV" key_buffer_size)
 READ_BUFFER_SIZE=$(kv_get "$VARS_TSV" read_buffer_size)
@@ -445,6 +451,17 @@ PERFORMANCE_SCHEMA=$(kv_get "$VARS_TSV" performance_schema)
 QPS=$(rate_per_s "$QUESTIONS" "$UPTIME_S")
 ABORT_PCT=$(pct "$ABORTED_CONNECTS" "$CONNECTIONS")
 OPENED_TABLES_PS=$(rate_per_s "$OPENED_TABLES" "$UPTIME_S")
+
+# MyISAM key buffer hit rate (best-effort)
+krreq=$(num "$KEY_READ_REQUESTS")
+kr=$(num "$KEY_READS")
+if [ "$krreq" -gt 0 ]; then
+  misspct=$(pct "$kr" "$krreq")
+  KEY_BUFFER_HIT_PCT=$((100 - misspct))
+  [ "$KEY_BUFFER_HIT_PCT" -lt 0 ] && KEY_BUFFER_HIT_PCT=0
+else
+  KEY_BUFFER_HIT_PCT=""
+fi
 
 # Memory estimate (best-effort)
 RAM_TOTAL=$(mem_total_bytes)
@@ -503,6 +520,10 @@ if [ "$JSON" -eq 1 ]; then
     --arg have_ssl "$HAVE_SSL" \
     --arg performance_schema "$PERFORMANCE_SCHEMA" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
+    --arg key_buffer_size "$KEY_BUFFER_SIZE" \
+    --arg key_read_requests "$KEY_READ_REQUESTS" \
+    --arg key_reads "$KEY_READS" \
+    --arg key_buffer_hit_pct "$KEY_BUFFER_HIT_PCT" \
     --arg mysql_user_readable "$MYSQL_USER_READABLE" \
     --arg mysql_user_col4 "$USER_COL4" \
     --arg passwordfile "$PASSWORDFILE" \
@@ -552,6 +573,10 @@ if [ "$JSON" -eq 1 ]; then
       have_ssl:$have_ssl,
       performance_schema:$performance_schema,
       max_allowed_packet:$max_allowed_packet,
+      key_buffer_size:$key_buffer_size,
+      key_read_requests:$key_read_requests,
+      key_reads:$key_reads,
+      key_buffer_hit_pct:$key_buffer_hit_pct,
       mysql_user_readable:$mysql_user_readable,
       mysql_user_col4:$mysql_user_col4,
       passwordfile:$passwordfile,
@@ -697,6 +722,17 @@ if [ "$bprr" -gt 0 ]; then
   hp=$(pct "$hit" "$bprr")
   info "InnoDB BP hit rate: ${hp}%"
   [ "$hp" -lt 95 ] && warn "Low InnoDB buffer pool hit rate (${hp}%)" || ok "InnoDB buffer pool hit rate (${hp}%)"
+fi
+
+section "MyISAM / Key Buffer"
+info "key_buffer_size:      $(bytes_h "$KEY_BUFFER_SIZE")"
+info "Key_read_requests:    $KEY_READ_REQUESTS"
+info "Key_reads:            $KEY_READS"
+if [ -n "${KEY_BUFFER_HIT_PCT:-}" ]; then
+  info "Key buffer hit rate:  ${KEY_BUFFER_HIT_PCT}%"
+  [ "$KEY_BUFFER_HIT_PCT" -lt 95 ] && warn "Low key buffer hit rate (${KEY_BUFFER_HIT_PCT}%)" || ok "Key buffer hit rate looks OK (${KEY_BUFFER_HIT_PCT}%)"
+else
+  info "Key buffer hit rate:  n/a"
 fi
 
 section "Table Open Cache"
