@@ -5,7 +5,7 @@
 # Keep strict mode, but avoid set -e (we want controlled error handling)
 set -u
 
-VERSION="0.3.0-devel"
+VERSION="0.4.0-devel"
 
 usage() {
   cat <<USAGE
@@ -153,7 +153,6 @@ num() {
 }
 
 rate_per_s() {
-  # $1: value, $2: uptime seconds
   v=$(num "$1")
   u=$(num "$2")
   if [ "$u" -le 0 ]; then
@@ -164,7 +163,6 @@ rate_per_s() {
 }
 
 pct() {
-  # $1: num, $2: denom -> integer percent
   a=$(num "$1")
   b=$(num "$2")
   if [ "$b" -le 0 ]; then
@@ -250,12 +248,16 @@ QUERIES=$(kv_get "$STATUS_TSV" Queries)
 CREATED_TMP_TABLES=$(kv_get "$STATUS_TSV" Created_tmp_tables)
 CREATED_TMP_DISK_TABLES=$(kv_get "$STATUS_TSV" Created_tmp_disk_tables)
 CREATED_TMP_FILES=$(kv_get "$STATUS_TSV" Created_tmp_files)
+TMP_TABLE_SIZE=$(kv_get "$VARS_TSV" tmp_table_size)
+MAX_HEAP_TABLE_SIZE=$(kv_get "$VARS_TSV" max_heap_table_size)
 
 INNODB_BP_SIZE=$(kv_get "$VARS_TSV" innodb_buffer_pool_size)
 INNODB_BP_INST=$(kv_get "$VARS_TSV" innodb_buffer_pool_instances)
 INNODB_BP_READ_REQ=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_read_requests)
 INNODB_BP_READS=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_reads)
 INNODB_LOG_WAITS=$(kv_get "$STATUS_TSV" Innodb_log_waits)
+INNODB_FLUSH_TRX=$(kv_get "$VARS_TSV" innodb_flush_log_at_trx_commit)
+INNODB_LOG_BUFFER_SIZE=$(kv_get "$VARS_TSV" innodb_log_buffer_size)
 
 QCACHE_TYPE=$(kv_get "$VARS_TSV" query_cache_type)
 QCACHE_SIZE=$(kv_get "$VARS_TSV" query_cache_size)
@@ -263,9 +265,20 @@ QCACHE_HITS=$(kv_get "$STATUS_TSV" Qcache_hits)
 QCACHE_PRUNES=$(kv_get "$STATUS_TSV" Qcache_lowmem_prunes)
 
 LOG_BIN=$(kv_get "$VARS_TSV" log_bin)
+BINLOG_FORMAT=$(kv_get "$VARS_TSV" binlog_format)
+SYNC_BINLOG=$(kv_get "$VARS_TSV" sync_binlog)
 SERVER_ID=$(kv_get "$VARS_TSV" server_id)
 READ_ONLY=$(kv_get "$VARS_TSV" read_only)
 SUPER_READ_ONLY=$(kv_get "$VARS_TSV" super_read_only)
+
+THREAD_CACHE_SIZE=$(kv_get "$VARS_TSV" thread_cache_size)
+THREAD_CACHE_HITS=$(kv_get "$STATUS_TSV" Threads_cached)
+OPEN_FILES_LIMIT=$(kv_get "$VARS_TSV" open_files_limit)
+TABLE_OPEN_CACHE=$(kv_get "$VARS_TSV" table_open_cache)
+OPENED_TABLES=$(kv_get "$STATUS_TSV" Opened_tables)
+OPEN_TABLES=$(kv_get "$STATUS_TSV" Open_tables)
+
+MAX_ALLOWED_PACKET=$(kv_get "$VARS_TSV" max_allowed_packet)
 
 # ---- Output (JSON) ---------------------------------------------------------
 if [ "$JSON" -eq 1 ]; then
@@ -290,19 +303,31 @@ if [ "$JSON" -eq 1 ]; then
     --arg created_tmp_tables "$CREATED_TMP_TABLES" \
     --arg created_tmp_disk_tables "$CREATED_TMP_DISK_TABLES" \
     --arg created_tmp_files "$CREATED_TMP_FILES" \
+    --arg tmp_table_size "$TMP_TABLE_SIZE" \
+    --arg max_heap_table_size "$MAX_HEAP_TABLE_SIZE" \
     --arg innodb_buffer_pool_size "$INNODB_BP_SIZE" \
     --arg innodb_buffer_pool_instances "$INNODB_BP_INST" \
     --arg innodb_buffer_pool_read_requests "$INNODB_BP_READ_REQ" \
     --arg innodb_buffer_pool_reads "$INNODB_BP_READS" \
     --arg innodb_log_waits "$INNODB_LOG_WAITS" \
+    --arg innodb_flush_log_at_trx_commit "$INNODB_FLUSH_TRX" \
+    --arg innodb_log_buffer_size "$INNODB_LOG_BUFFER_SIZE" \
     --arg query_cache_type "$QCACHE_TYPE" \
     --arg query_cache_size "$QCACHE_SIZE" \
     --arg qcache_hits "$QCACHE_HITS" \
     --arg qcache_lowmem_prunes "$QCACHE_PRUNES" \
     --arg log_bin "$LOG_BIN" \
+    --arg binlog_format "$BINLOG_FORMAT" \
+    --arg sync_binlog "$SYNC_BINLOG" \
     --arg server_id "$SERVER_ID" \
     --arg read_only "$READ_ONLY" \
     --arg super_read_only "$SUPER_READ_ONLY" \
+    --arg thread_cache_size "$THREAD_CACHE_SIZE" \
+    --arg open_files_limit "$OPEN_FILES_LIMIT" \
+    --arg table_open_cache "$TABLE_OPEN_CACHE" \
+    --arg opened_tables "$OPENED_TABLES" \
+    --arg open_tables "$OPEN_TABLES" \
+    --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     '{
       version:$version,
       flavor:$flavor,
@@ -324,19 +349,31 @@ if [ "$JSON" -eq 1 ]; then
       created_tmp_tables:$created_tmp_tables,
       created_tmp_disk_tables:$created_tmp_disk_tables,
       created_tmp_files:$created_tmp_files,
+      tmp_table_size:$tmp_table_size,
+      max_heap_table_size:$max_heap_table_size,
       innodb_buffer_pool_size:$innodb_buffer_pool_size,
       innodb_buffer_pool_instances:$innodb_buffer_pool_instances,
       innodb_buffer_pool_read_requests:$innodb_buffer_pool_read_requests,
       innodb_buffer_pool_reads:$innodb_buffer_pool_reads,
       innodb_log_waits:$innodb_log_waits,
+      innodb_flush_log_at_trx_commit:$innodb_flush_log_at_trx_commit,
+      innodb_log_buffer_size:$innodb_log_buffer_size,
       query_cache_type:$query_cache_type,
       query_cache_size:$query_cache_size,
       qcache_hits:$qcache_hits,
       qcache_lowmem_prunes:$qcache_lowmem_prunes,
       log_bin:$log_bin,
+      binlog_format:$binlog_format,
+      sync_binlog:$sync_binlog,
       server_id:$server_id,
       read_only:$read_only,
-      super_read_only:$super_read_only
+      super_read_only:$super_read_only,
+      thread_cache_size:$thread_cache_size,
+      open_files_limit:$open_files_limit,
+      table_open_cache:$table_open_cache,
+      opened_tables:$opened_tables,
+      open_tables:$open_tables,
+      max_allowed_packet:$max_allowed_packet
     }'
   exit 0
 fi
@@ -356,11 +393,11 @@ qps=$(rate_per_s "$QUESTIONS" "$UPTIME_S")
 info "Questions: $QUESTIONS (QPS: $qps)"
 
 section "Connections"
-info "max_connections:     $MAX_CONNECTIONS"
+info "max_connections:      $MAX_CONNECTIONS"
 info "Max_used_connections: $MAX_USED_CONNECTIONS"
-info "Threads_connected:   $THREADS_CONNECTED"
-info "Threads_running:     $THREADS_RUNNING"
-info "Threads_created:     $THREADS_CREATED"
+info "Threads_connected:    $THREADS_CONNECTED"
+info "Threads_running:      $THREADS_RUNNING"
+info "Threads_created:      $THREADS_CREATED"
 
 mc=$(num "$MAX_CONNECTIONS")
 tc=$(num "$THREADS_CONNECTED")
@@ -401,10 +438,12 @@ tmp=$(num "$CREATED_TMP_TABLES")
 tmpdisk=$(num "$CREATED_TMP_DISK_TABLES")
 info "Created_tmp_tables:      $CREATED_TMP_TABLES"
 info "Created_tmp_disk_tables: $CREATED_TMP_DISK_TABLES"
+info "tmp_table_size:          $(bytes_h "$TMP_TABLE_SIZE")"
+info "max_heap_table_size:     $(bytes_h "$MAX_HEAP_TABLE_SIZE")"
 if [ "$tmp" -gt 0 ] && [ "$tmpdisk" -gt 0 ]; then
   p=$(pct "$tmpdisk" "$tmp")
   if [ "$p" -ge 25 ]; then
-    warn "High tmp tables on disk: ${p}% (consider tuning tmp_table_size/max_heap_table_size)"
+    warn "High tmp tables on disk: ${p}% (consider increasing tmp_table_size/max_heap_table_size)"
   else
     ok "Tmp tables on disk: ${p}%"
   fi
@@ -413,6 +452,8 @@ fi
 section "InnoDB"
 [ -n "$INNODB_BP_SIZE" ] && info "innodb_buffer_pool_size: $(bytes_h "$INNODB_BP_SIZE")"
 [ -n "$INNODB_BP_INST" ] && info "innodb_buffer_pool_instances: $INNODB_BP_INST"
+[ -n "$INNODB_FLUSH_TRX" ] && info "innodb_flush_log_at_trx_commit: $INNODB_FLUSH_TRX"
+[ -n "$INNODB_LOG_BUFFER_SIZE" ] && info "innodb_log_buffer_size: $(bytes_h "$INNODB_LOG_BUFFER_SIZE")"
 
 bprr=$(num "$INNODB_BP_READ_REQ")
 bpr=$(num "$INNODB_BP_READS")
@@ -428,7 +469,7 @@ if [ "$bprr" -gt 0 ]; then
 fi
 
 if [ "$(num "$INNODB_LOG_WAITS")" -gt 0 ]; then
-  warn "Innodb_log_waits: $INNODB_LOG_WAITS (consider tuning innodb_log_file_size/innodb_log_buffer_size)"
+  warn "Innodb_log_waits: $INNODB_LOG_WAITS (consider tuning InnoDB redo/log settings)"
 fi
 
 section "Query Cache"
@@ -438,11 +479,25 @@ if [ "$(num "$QCACHE_PRUNES")" -gt 0 ]; then
   warn "Qcache_lowmem_prunes: $QCACHE_PRUNES"
 fi
 
+section "Thread Cache"
+[ -n "$THREAD_CACHE_SIZE" ] && info "thread_cache_size: $THREAD_CACHE_SIZE"
+[ -n "$THREAD_CACHE_HITS" ] && info "Threads_cached: $THREAD_CACHE_HITS"
+
+section "Table Open Cache"
+[ -n "$TABLE_OPEN_CACHE" ] && info "table_open_cache: $TABLE_OPEN_CACHE"
+[ -n "$OPEN_TABLES" ] && info "Open_tables: $OPEN_TABLES"
+[ -n "$OPENED_TABLES" ] && info "Opened_tables: $OPENED_TABLES"
+
 section "Replication (basic)"
 [ -n "$LOG_BIN" ] && info "log_bin: $LOG_BIN"
+[ -n "$BINLOG_FORMAT" ] && info "binlog_format: $BINLOG_FORMAT"
+[ -n "$SYNC_BINLOG" ] && info "sync_binlog: $SYNC_BINLOG"
 [ -n "$SERVER_ID" ] && info "server_id: $SERVER_ID"
 [ -n "$READ_ONLY" ] && info "read_only: $READ_ONLY"
 [ -n "$SUPER_READ_ONLY" ] && info "super_read_only: $SUPER_READ_ONLY"
+
+section "Packet Size"
+[ -n "$MAX_ALLOWED_PACKET" ] && info "max_allowed_packet: $(bytes_h "$MAX_ALLOWED_PACKET")"
 
 ok "Collected: SHOW GLOBAL VARIABLES/STATUS"
 warn "Next: implement full MySQLTuner-perl checks for feature parity."
