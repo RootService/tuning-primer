@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.14.0-devel"
+VERSION="3.15.0-devel"
 
 usage() {
   cat <<USAGE
@@ -454,6 +454,7 @@ fi
 
 INNODB_BP_SIZE=$(kv_get "$VARS_TSV" innodb_buffer_pool_size)
 INNODB_BP_INSTANCES=$(kv_get "$VARS_TSV" innodb_buffer_pool_instances)
+INNODB_BP_CHUNK_SIZE=$(kv_get "$VARS_TSV" innodb_buffer_pool_chunk_size)
 INNODB_BP_READ_REQ=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_read_requests)
 INNODB_BP_READS=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_reads)
 
@@ -727,6 +728,20 @@ else
   INNODB_LOG_SIZE_PCT=""
 fi
 
+# InnoDB buffer pool chunk alignment (best-effort; MySQL8 has chunk_size)
+chunk=$(num "$INNODB_BP_CHUNK_SIZE")
+inst=$(num "$INNODB_BP_INSTANCES")
+if [ "$chunk" -gt 0 ] && [ "$inst" -gt 0 ] && [ "$rbp" -gt 0 ]; then
+  expected=$((chunk * inst))
+  if [ "$expected" -gt 0 ] && [ $((rbp % expected)) -eq 0 ]; then
+    INNODB_BP_CHUNK_ALIGNED=yes
+  else
+    INNODB_BP_CHUNK_ALIGNED=no
+  fi
+else
+  INNODB_BP_CHUNK_ALIGNED=""
+fi
+
 # Memory estimate (best-effort)
 RAM_TOTAL=$(mem_total_bytes)
 GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SIZE")" -v c="$(num "$QCACHE_SIZE")" -v d="$(num "$MAX_TMP_TABLE_SIZE")" -v e="$(num "$INNODB_LOG_BUFFER_SIZE")" 'BEGIN{printf "%d", a+b+c+d+e}')
@@ -845,6 +860,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg slow_queries_per_day "$SLOW_QUERIES_PER_DAY" \
     --arg innodb_buffer_pool_size "$INNODB_BP_SIZE" \
     --arg innodb_buffer_pool_instances "$INNODB_BP_INSTANCES" \
+    --arg innodb_buffer_pool_chunk_size "$INNODB_BP_CHUNK_SIZE" \
+    --arg innodb_buffer_pool_chunk_aligned "${INNODB_BP_CHUNK_ALIGNED:-}" \
     --arg innodb_buffer_pool_read_requests "$INNODB_BP_READ_REQ" \
     --arg innodb_buffer_pool_reads "$INNODB_BP_READS" \
     --arg innodb_flush_log_at_trx_commit "$INNODB_FLUSH_LOG_AT_TRX" \
@@ -1012,6 +1029,8 @@ if [ "$JSON" -eq 1 ]; then
       slow_queries_per_day:$slow_queries_per_day,
       innodb_buffer_pool_size:$innodb_buffer_pool_size,
       innodb_buffer_pool_instances:$innodb_buffer_pool_instances,
+      innodb_buffer_pool_chunk_size:$innodb_buffer_pool_chunk_size,
+      innodb_buffer_pool_chunk_aligned:$innodb_buffer_pool_chunk_aligned,
       innodb_buffer_pool_read_requests:$innodb_buffer_pool_read_requests,
       innodb_buffer_pool_reads:$innodb_buffer_pool_reads,
       innodb_flush_log_at_trx_commit:$innodb_flush_log_at_trx_commit,
@@ -1410,6 +1429,10 @@ if [ -n "${INNODB_BP_DATA_PCT:-}" ]; then
   [ "$(num "$INNODB_BP_DATA_PCT")" -lt 100 ] && warn "InnoDB buffer pool is smaller than InnoDB data+index size" || true
 fi
 [ -n "$INNODB_BP_INSTANCES" ] && info "innodb_buffer_pool_instances: $INNODB_BP_INSTANCES"
+[ -n "$INNODB_BP_CHUNK_SIZE" ] && info "innodb_buffer_pool_chunk_size: $(bytes_h "$INNODB_BP_CHUNK_SIZE")"
+if [ -n "${INNODB_BP_CHUNK_ALIGNED:-}" ]; then
+  [ "$INNODB_BP_CHUNK_ALIGNED" = "yes" ] && ok "innodb_buffer_pool_size aligned with chunk_size * instances" || warn "innodb_buffer_pool_size not aligned with chunk_size * instances"
+fi
 [ -n "$INNODB_FILE_PER_TABLE" ] && info "innodb_file_per_table: $INNODB_FILE_PER_TABLE"
 [ -n "$INNODB_FLUSH_METHOD" ] && info "innodb_flush_method: $INNODB_FLUSH_METHOD"
 [ -n "$INNODB_FLUSH_LOG_AT_TRX" ] && info "innodb_flush_log_at_trx_commit: $INNODB_FLUSH_LOG_AT_TRX"
