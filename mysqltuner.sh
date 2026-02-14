@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="1.5.0-devel"
+VERSION="1.6.0-devel"
 
 usage() {
   cat <<USAGE
@@ -444,6 +444,17 @@ SORT_BUFFER_SIZE=$(kv_get "$VARS_TSV" sort_buffer_size)
 JOIN_BUFFER_SIZE=$(kv_get "$VARS_TSV" join_buffer_size)
 THREAD_STACK=$(kv_get "$VARS_TSV" thread_stack)
 QCACHE_SIZE=$(kv_get "$VARS_TSV" query_cache_size)
+QCACHE_TYPE=$(kv_get "$VARS_TSV" query_cache_type)
+QCACHE_LIMIT=$(kv_get "$VARS_TSV" query_cache_limit)
+QCACHE_MIN_RES_UNIT=$(kv_get "$VARS_TSV" query_cache_min_res_unit)
+
+QCACHE_HITS=$(kv_get "$STATUS_TSV" Qcache_hits)
+QCACHE_INSERTS=$(kv_get "$STATUS_TSV" Qcache_inserts)
+QCACHE_NOT_CACHED=$(kv_get "$STATUS_TSV" Qcache_not_cached)
+QCACHE_LOWPRUNES=$(kv_get "$STATUS_TSV" Qcache_lowmem_prunes)
+QCACHE_FREE_MEM=$(kv_get "$STATUS_TSV" Qcache_free_memory)
+QCACHE_FREE_BLOCKS=$(kv_get "$STATUS_TSV" Qcache_free_blocks)
+QCACHE_TOTAL_BLOCKS=$(kv_get "$STATUS_TSV" Qcache_total_blocks)
 
 # Network/security exposure
 BIND_ADDRESS=$(kv_get "$VARS_TSV" bind_address)
@@ -476,6 +487,16 @@ if [ "$conn" -gt 0 ]; then
   [ "$THREAD_CACHE_HIT_PCT" -lt 0 ] && THREAD_CACHE_HIT_PCT=0
 else
   THREAD_CACHE_HIT_PCT=""
+fi
+
+# Query cache efficiency (best-effort)
+qch=$(num "$QCACHE_HITS")
+qci=$(num "$QCACHE_INSERTS")
+qct=$((qch + qci))
+if [ "$qct" -gt 0 ]; then
+  QCACHE_HIT_PCT=$(pct "$qch" "$qct")
+else
+  QCACHE_HIT_PCT=""
 fi
 
 # MyISAM key buffer hit rate (best-effort)
@@ -563,6 +584,18 @@ if [ "$JSON" -eq 1 ]; then
     --arg key_read_requests "$KEY_READ_REQUESTS" \
     --arg key_reads "$KEY_READS" \
     --arg key_buffer_hit_pct "$KEY_BUFFER_HIT_PCT" \
+    --arg query_cache_size "$QCACHE_SIZE" \
+    --arg query_cache_type "$QCACHE_TYPE" \
+    --arg query_cache_limit "$QCACHE_LIMIT" \
+    --arg query_cache_min_res_unit "$QCACHE_MIN_RES_UNIT" \
+    --arg qcache_hits "$QCACHE_HITS" \
+    --arg qcache_inserts "$QCACHE_INSERTS" \
+    --arg qcache_lowmem_prunes "$QCACHE_LOWPRUNES" \
+    --arg qcache_not_cached "$QCACHE_NOT_CACHED" \
+    --arg qcache_free_memory "$QCACHE_FREE_MEM" \
+    --arg qcache_free_blocks "$QCACHE_FREE_BLOCKS" \
+    --arg qcache_total_blocks "$QCACHE_TOTAL_BLOCKS" \
+    --arg qcache_hit_pct "$QCACHE_HIT_PCT" \
     --arg mysql_user_readable "$MYSQL_USER_READABLE" \
     --arg mysql_user_col4 "$USER_COL4" \
     --arg passwordfile "$PASSWORDFILE" \
@@ -629,6 +662,18 @@ if [ "$JSON" -eq 1 ]; then
       key_read_requests:$key_read_requests,
       key_reads:$key_reads,
       key_buffer_hit_pct:$key_buffer_hit_pct,
+      query_cache_size:$query_cache_size,
+      query_cache_type:$query_cache_type,
+      query_cache_limit:$query_cache_limit,
+      query_cache_min_res_unit:$query_cache_min_res_unit,
+      qcache_hits:$qcache_hits,
+      qcache_inserts:$qcache_inserts,
+      qcache_lowmem_prunes:$qcache_lowmem_prunes,
+      qcache_not_cached:$qcache_not_cached,
+      qcache_free_memory:$qcache_free_memory,
+      qcache_free_blocks:$qcache_free_blocks,
+      qcache_total_blocks:$qcache_total_blocks,
+      qcache_hit_pct:$qcache_hit_pct,
       mysql_user_readable:$mysql_user_readable,
       mysql_user_col4:$mysql_user_col4,
       passwordfile:$passwordfile,
@@ -749,6 +794,30 @@ if [ "$(num "$RAM_TOTAL")" -gt 0 ]; then
   [ "$mempct" -ge 85 ] && warn "Max memory estimate high (${mempct}% of RAM)" || ok "Max memory estimate: ${mempct}% of RAM"
 else
   info "System RAM unknown; skipping RAM comparison"
+fi
+
+section "Query Cache"
+info "query_cache_type:       $QCACHE_TYPE"
+info "query_cache_size:       $(bytes_h "$QCACHE_SIZE")"
+info "query_cache_limit:      $(bytes_h "$QCACHE_LIMIT")"
+info "query_cache_min_res_unit: $(bytes_h "$QCACHE_MIN_RES_UNIT")"
+info "Qcache_hits:            $QCACHE_HITS"
+info "Qcache_inserts:         $QCACHE_INSERTS"
+info "Qcache_not_cached:      $QCACHE_NOT_CACHED"
+info "Qcache_lowmem_prunes:   $QCACHE_LOWPRUNES"
+info "Qcache_free_memory:     $(bytes_h "$QCACHE_FREE_MEM")"
+
+if [ "$(num "$QCACHE_SIZE")" -gt 0 ]; then
+  if [ "$MYSQL_VER_MAJ" -ge 8 ]; then
+    warn "query_cache_size > 0 on MySQL 8+ (query cache removed upstream; check compatibility)"
+  fi
+  if [ -n "${QCACHE_HIT_PCT:-}" ]; then
+    info "Query cache hit rate:   ${QCACHE_HIT_PCT}%"
+    [ "$QCACHE_HIT_PCT" -lt 20 ] && warn "Low query cache hit rate (${QCACHE_HIT_PCT}%)" || true
+  fi
+  [ "$(num "$QCACHE_LOWPRUNES")" -gt 0 ] && warn "Query cache prunes detected ($QCACHE_LOWPRUNES)" || true
+else
+  ok "Query cache disabled"
 fi
 
 section "Slow Query Log"
