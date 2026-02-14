@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.57.0-devel"
+VERSION="3.58.0-devel"
 
 usage() {
   cat <<USAGE
@@ -900,9 +900,21 @@ if [ -n "$SCHEMA_DIR" ]; then
           jq -Rnr '[inputs | select(length>0) | split("\t") | {name:.[0], type:.[1], nullable:.[2]}] | .[] | "- **" + .name + "**: " + (.type|ascii_upcase) + (if .nullable=="NO" then " NOT NULL" else " NULL" end)'
 
         printf '\n#### Constraints\n\n'
-        # CHECK constraints (best-effort)
-        mysql_query_silent "SELECT constraint_name FROM information_schema.table_constraints WHERE constraint_type='CHECK' AND constraint_schema='$db' AND table_name='$tb' ORDER BY constraint_name;" 2>/dev/null | \
-          jq -Rnr '[inputs | select(length>0) | .] | if length==0 then ["*No CHECK constraints*" ] else map("- " + .) end | .[]'
+        # CHECK constraints (best-effort) + clauses (MySQL 8+)
+        CHECK_NAMES=$(mysql_query_silent "SELECT constraint_name FROM information_schema.table_constraints WHERE constraint_type='CHECK' AND constraint_schema='$db' AND table_name='$tb' ORDER BY constraint_name;" 2>/dev/null)
+        if [ -z "$CHECK_NAMES" ]; then
+          printf '%s\n' "*No CHECK constraints*"
+        else
+          printf '%s\n' "$CHECK_NAMES" | while IFS= read -r cn; do
+            [ -z "$cn" ] && continue
+            clause=$(mysql_query_silent "SELECT check_clause FROM information_schema.check_constraints WHERE constraint_schema='$db' AND constraint_name='$cn';" 2>/dev/null | head -n 1)
+            if [ -n "$clause" ]; then
+              printf '%s\n' "- $cn: $clause"
+            else
+              printf '%s\n' "- $cn"
+            fi
+          done
+        fi
 
         printf '\n#### Foreign Keys\n\n'
         # FK list with update/delete rules (best-effort)
