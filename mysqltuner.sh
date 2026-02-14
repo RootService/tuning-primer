@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.10.0-devel"
+VERSION="3.11.0-devel"
 
 usage() {
   cat <<USAGE
@@ -737,6 +737,15 @@ MAX_TOTAL_PER_THREAD_BUFFERS=$(awk -v p="$PER_THREAD_BUFFERS" -v mu="$(num "$MAX
 TOTAL_BUFFERS=$(awk -v s="$SERVER_BUFFERS" -v t="$TOTAL_PER_THREAD_BUFFERS" 'BEGIN{printf "%d", s+t}')
 MAX_TOTAL_BUFFERS=$(awk -v s="$SERVER_BUFFERS" -v t="$MAX_TOTAL_PER_THREAD_BUFFERS" 'BEGIN{printf "%d", s+t}')
 
+# Percent of physical memory (best-effort)
+if [ "$(num "$RAM_TOTAL")" -gt 0 ]; then
+  PCT_MAX_USED_MEMORY=$(pct "$MAX_TOTAL_BUFFERS" "$RAM_TOTAL")
+  PCT_MAX_PEAK_MEMORY=$(pct "$TOTAL_BUFFERS" "$RAM_TOTAL")
+else
+  PCT_MAX_USED_MEMORY=""
+  PCT_MAX_PEAK_MEMORY=""
+fi
+
 # InnoDB buffer pool vs data size (best-effort)
 ibp=$(num "$INNODB_BP_SIZE")
 idb=$(num "$INNODB_DATA_BYTES")
@@ -920,6 +929,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg max_total_per_thread_buffers_bytes "$MAX_TOTAL_PER_THREAD_BUFFERS" \
     --arg total_buffers_bytes "$TOTAL_BUFFERS" \
     --arg max_total_buffers_bytes "$MAX_TOTAL_BUFFERS" \
+    --arg pct_max_used_memory "${PCT_MAX_USED_MEMORY:-}" \
+    --arg pct_max_peak_memory "${PCT_MAX_PEAK_MEMORY:-}" \
     --arg cve_found "$CVE_FOUND" \
     --argjson cve_list "$CVE_LIST_JSON" \
     --arg weak_password_hits "$WEAK_PASSWORD_HITS" \
@@ -1082,6 +1093,8 @@ if [ "$JSON" -eq 1 ]; then
       max_total_per_thread_buffers_bytes:$max_total_per_thread_buffers_bytes,
       total_buffers_bytes:$total_buffers_bytes,
       max_total_buffers_bytes:$max_total_buffers_bytes,
+      pct_max_used_memory:$pct_max_used_memory,
+      pct_max_peak_memory:$pct_max_peak_memory,
       cve_found:$cve_found,
       cve_list:$cve_list,
       weak_password_hits:$weak_password_hits,
@@ -1241,6 +1254,14 @@ info "Total per-thread buffers: $(bytes_h "$TOTAL_PER_THREAD_BUFFERS")"
 info "Max per-thread buffers:   $(bytes_h "$MAX_TOTAL_PER_THREAD_BUFFERS") (at Max_used_connections)"
 info "Total buffers:           $(bytes_h "$TOTAL_BUFFERS")"
 info "Max total buffers:       $(bytes_h "$MAX_TOTAL_BUFFERS") (at Max_used_connections)"
+if [ -n "${PCT_MAX_USED_MEMORY:-}" ]; then
+  info "Max used memory % of RAM: ${PCT_MAX_USED_MEMORY}%"
+  [ "$(num "$PCT_MAX_USED_MEMORY")" -ge 85 ] && warn "Max used memory is high (${PCT_MAX_USED_MEMORY}% of RAM)" || true
+fi
+if [ -n "${PCT_MAX_PEAK_MEMORY:-}" ]; then
+  info "Max peak memory % of RAM: ${PCT_MAX_PEAK_MEMORY}%"
+  [ "$(num "$PCT_MAX_PEAK_MEMORY")" -ge 85 ] && warn "Max peak memory is high (${PCT_MAX_PEAK_MEMORY}% of RAM)" || true
+fi
 if [ "$(num "$RAM_TOTAL")" -gt 0 ]; then
   info "System RAM (best-effort): $(bytes_h "$RAM_TOTAL")"
   mempct=$(pct "$MAX_MEM" "$RAM_TOTAL")
