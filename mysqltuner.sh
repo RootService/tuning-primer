@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.19.0-devel"
+VERSION="3.19.1-devel"
 
 usage() {
   cat <<USAGE
@@ -1315,7 +1315,10 @@ if [ -n "${PCT_MAX_USED_MEMORY:-}" ]; then
 fi
 if [ -n "${PCT_MAX_PEAK_MEMORY:-}" ]; then
   info "Maximum possible memory usage: $(bytes_h "$TOTAL_BUFFERS") (${PCT_MAX_PEAK_MEMORY}% of installed RAM)"
-  [ "$(num "$PCT_MAX_PEAK_MEMORY")" -gt 85 ] && warn "Maximum possible memory usage is high (${PCT_MAX_PEAK_MEMORY}% of RAM)" || true
+  if [ "$(num "$PCT_MAX_PEAK_MEMORY")" -gt 85 ]; then
+    warn "Maximum possible memory usage is high (${PCT_MAX_PEAK_MEMORY}% of RAM)"
+    warn "Reduce your overall MySQL memory footprint for system stability"
+  fi
 fi
 if [ "$(num "$RAM_TOTAL")" -gt 0 ]; then
   info "System RAM (best-effort): $(bytes_h "$RAM_TOTAL")"
