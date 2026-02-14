@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.44.0-devel"
+VERSION="3.45.0-devel"
 
 usage() {
   cat <<USAGE
@@ -32,6 +32,9 @@ Output options:
   --dump-dir <dir>          (write CSV dumps like upstream into this directory)
   --schema-dir <dir>        (write markdown + mermaid ER docs into this directory)
 
+Report modes:
+  --tbstat                 (table metrics / per-table index listing; noisy)
+
 Misc:
   --ignore-dbs <db1,db2>    (comma-separated)
   --ignore-tables <t1,t2>   (comma-separated; matches table_name only)
@@ -58,7 +61,7 @@ cleanup() {
 }
 
 # ---- Argument parsing (POSIX-compatible) -----------------------------------
-HOST=""; PORT=""; SOCKET=""; USER=""; PASS=""; DEFAULTS_FILE=""; SILENT=0; JSON=0; DUMP_DIR=""; SCHEMA_DIR=""; REC_WARN=""; REC_OK=""; IGNORE_DBS=""; IGNORE_TABLES=""
+HOST=""; PORT=""; SOCKET=""; USER=""; PASS=""; DEFAULTS_FILE=""; SILENT=0; JSON=0; DUMP_DIR=""; SCHEMA_DIR=""; REC_WARN=""; REC_OK=""; IGNORE_DBS=""; IGNORE_TABLES=""; TBSTAT=0
 CVEFILE=""
 PASSWORDFILE=""
 MAX_PASSWORD_CHECKS=500
@@ -82,6 +85,7 @@ while [ $# -gt 0 ]; do
     --json) JSON=1 ;;
     --dump-dir) shift; DUMP_DIR="${1-}" ;;
     --schema-dir) shift; SCHEMA_DIR="${1-}" ;;
+    --tbstat) TBSTAT=1 ;;
     --) shift; break ;;
     -*) die "unknown option: $1" ;;
     *) break ;;
@@ -712,6 +716,24 @@ ROUTINES_COUNT=$(printf '%s' "$ROUTINES_JSON" | jq -r 'length')
 TRIGGERS_JSON=$(mysql_query_silent "SELECT trigger_schema, trigger_name, event_object_table, event_manipulation, action_timing, definer FROM information_schema.triggers WHERE trigger_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY trigger_schema, trigger_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], trigger:.[1], table:.[2], event:.[3], timing:.[4], definer:.[5]}]')
 TRIGGERS_COUNT=$(printf '%s' "$TRIGGERS_JSON" | jq -r 'length')
 
+# mysql_tables (table metrics) - best-effort; gated by --tbstat
+TABLE_METRICS_JSON='[]'
+TABLE_METRICS_COUNT=0
+if [ "$TBSTAT" -eq 1 ] || [ -n "$SCHEMA_DIR" ]; then
+  TABLE_METRICS_JSON=$(mysql_query_silent "SELECT t.table_schema, t.table_name, t.engine, s.index_name, GROUP_CONCAT(s.column_name ORDER BY s.seq_in_index) AS cols, s.index_type, s.non_unique FROM information_schema.tables t LEFT JOIN information_schema.statistics s ON t.table_schema=s.table_schema AND t.table_name=s.table_name WHERE t.table_type='BASE TABLE' AND t.table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY t.table_schema, t.table_name, t.engine, s.index_name, s.index_type, s.non_unique ORDER BY t.table_schema, t.table_name, s.index_name;" 2>/dev/null | jq -Rn '
+    [inputs | select(length>0) | split("\t")
+      | {schema:.[0], table:.[1], engine:.[2], index:.[3], cols:.[4], index_type:.[5], non_unique:.[6]}]
+    | group_by(.schema,.table)
+    | map({
+        schema:.[0].schema,
+        table:.[0].table,
+        engine:.[0].engine,
+        indexes:(map(select(.index!="" and .index!="NULL") | {name:.index, columns:(.cols|split(",")), type:.index_type, non_unique:((.non_unique|tonumber?)//0) }))
+      })
+  ')
+  TABLE_METRICS_COUNT=$(printf '%s' "$TABLE_METRICS_JSON" | jq -r 'length')
+fi
+
 # Index inventory (best-effort)
 INDEXES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, index_name, GROUP_CONCAT(column_name ORDER BY seq_in_index) AS cols, index_type, non_unique FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys') GROUP BY table_schema, table_name, index_name, index_type, non_unique ORDER BY table_schema, table_name, index_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], index:.[2], columns:(.[3]|split(",")), index_type:.[4], non_unique:(.[5]|tonumber)}]')
 INDEXES_COUNT=$(printf '%s' "$INDEXES_JSON" | jq -r 'length')
@@ -846,6 +868,11 @@ if [ -n "$DUMP_DIR" ]; then
 
   # tables_no_index.csv
   printf '%s' "$TABLES_NO_INDEX_JSON" | dump_csv_file "$DUMP_DIR/tables_no_index.csv" "Schema,Table" '.[] | [.schema,.table] | @csv'
+
+  # table_metrics.json (raw)
+  if [ "$TBSTAT" -eq 1 ] || [ -n "$SCHEMA_DIR" ]; then
+    printf '%s\n' "$TABLE_METRICS_JSON" >"$DUMP_DIR/table_metrics.json"
+  fi
 
   # duplicate_indexes.csv
   printf '%s' "$DUPLICATE_INDEXES_JSON" | dump_csv_file "$DUMP_DIR/duplicate_indexes.csv" "Schema,Table,Indexes,Columns,IndexType,NonUnique" '.[] | [.schema,.table,(.indexes|join("|")),(.columns|join("|")),(.index_type//""),(.non_unique|tostring)] | @csv'
@@ -1405,6 +1432,8 @@ if [ "$JSON" -eq 1 ]; then
     --argjson duplicate_indexes "$DUPLICATE_INDEXES_JSON" \
     --arg redundant_indexes_count "$REDUNDANT_INDEXES_COUNT" \
     --argjson redundant_indexes "$REDUNDANT_INDEXES_JSON" \
+    --arg table_metrics_count "$TABLE_METRICS_COUNT" \
+    --argjson table_metrics "$TABLE_METRICS_JSON" \
     --arg schema_dir "$SCHEMA_DIR" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
@@ -1666,6 +1695,8 @@ if [ "$JSON" -eq 1 ]; then
       duplicate_indexes:$duplicate_indexes,
       redundant_indexes_count:$redundant_indexes_count,
       redundant_indexes:$redundant_indexes,
+      table_metrics_count:$table_metrics_count,
+      table_metrics:$table_metrics,
       schema_dir:$schema_dir,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
@@ -1914,6 +1945,15 @@ info "Routines: $ROUTINES_COUNT"
 [ "$(num "$ROUTINES_COUNT")" -gt 0 ] && printf '%s' "$ROUTINES_JSON" | jq -r '.[:10][] | "[INFO] Routine " + .schema + "." + .routine + " type=" + .type' || true
 info "Triggers: $TRIGGERS_COUNT"
 [ "$(num "$TRIGGERS_COUNT")" -gt 0 ] && printf '%s' "$TRIGGERS_JSON" | jq -r '.[:10][] | "[INFO] Trigger " + .schema + "." + .trigger + " on " + .table + " " + .timing + " " + .event' || true
+
+section "Table Column Metrics"
+if [ "$TBSTAT" -eq 1 ]; then
+  info "Tables (detailed): $TABLE_METRICS_COUNT"
+  # print first few only to avoid flooding
+  printf '%s' "$TABLE_METRICS_JSON" | jq -r '.[:20][] | "[INFO] Table " + .schema + "." + .table + " engine=" + (.engine//"") + " indexes=" + ((.indexes|length)|tostring)'
+  # warn for no indexes
+  printf '%s' "$TABLE_METRICS_JSON" | jq -r '.[] | select((.indexes|length)==0) | "[WARN] Table " + .schema + "." + .table + " has no index defined"' | head -n 20
+fi
 
 section "Indexes"
 info "Indexes: $INDEXES_COUNT"
