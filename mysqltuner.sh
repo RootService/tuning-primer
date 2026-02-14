@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.33.0-devel"
+VERSION="3.34.0-devel"
 
 usage() {
   cat <<USAGE
@@ -568,6 +568,10 @@ NON_UTF8_COLS_COUNT=$(printf '%s' "$NON_UTF8_COLS_JSON" | jq -r 'length')
 # 12) primary key modeling checks (best-effort)
 PK_INFO_JSON=$(mysql_query_silent "SELECT c.table_schema, c.table_name, c.column_name, c.data_type, c.column_type FROM information_schema.columns c JOIN information_schema.tables t USING (table_schema, table_name) WHERE t.table_type='BASE TABLE' AND c.column_key='PRI' AND c.table_schema NOT IN ('sys','mysql','information_schema','performance_schema');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], data_type:.[3], column_type:.[4]}]')
 
+# 13) fulltext columns (best-effort)
+FULLTEXT_COLS_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name, data_type FROM information_schema.columns WHERE table_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND data_type='fulltext';" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], data_type:.[3]}]')
+FULLTEXT_COLS_COUNT=$(printf '%s' "$FULLTEXT_COLS_JSON" | jq -r 'length')
+
 PK_NAMING_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(.column != "id" and .column != (.table + "_id")) | {schema, table, column}]')
 PK_NAMING_ISSUES_COUNT=$(printf '%s' "$PK_NAMING_ISSUES_JSON" | jq -r 'length')
 
@@ -1066,6 +1070,8 @@ if [ "$JSON" -eq 1 ]; then
     --argjson uuid_pk_issues "$UUID_PK_ISSUES_JSON" \
     --arg pk_surrogate_issues_count "$PK_SURROGATE_ISSUES_COUNT" \
     --argjson pk_surrogate_issues "$PK_SURROGATE_ISSUES_JSON" \
+    --arg fulltext_cols_count "$FULLTEXT_COLS_COUNT" \
+    --argjson fulltext_cols "$FULLTEXT_COLS_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1279,6 +1285,8 @@ if [ "$JSON" -eq 1 ]; then
       uuid_pk_issues:$uuid_pk_issues,
       pk_surrogate_issues_count:$pk_surrogate_issues_count,
       pk_surrogate_issues:$pk_surrogate_issues,
+      fulltext_cols_count:$fulltext_cols_count,
+      fulltext_cols:$fulltext_cols,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1465,6 +1473,12 @@ fi
 info "PK not recommended surrogate (BIGINT UNSIGNED AUTO_INCREMENT): $PK_SURROGATE_ISSUES_COUNT"
 if [ "$(num "$PK_SURROGATE_ISSUES_COUNT")" -gt 0 ]; then
   printf '%s' "$PK_SURROGATE_ISSUES_JSON" | jq -r '.[:10][] | "[WARN] PK type: " + .schema + "." + .table + "." + .column + " type=" + .column_type'
+fi
+
+section "Fulltext"
+info "Fulltext columns: $FULLTEXT_COLS_COUNT"
+if [ "$(num "$FULLTEXT_COLS_COUNT")" -gt 0 ]; then
+  printf '%s' "$FULLTEXT_COLS_JSON" | jq -r '.[:10][] | "[INFO] FULLTEXT: " + .schema + "." + .table + "." + .column'
 fi
 
 section "Replication"
