@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.34.0-devel"
+VERSION="3.35.0-devel"
 
 usage() {
   cat <<USAGE
@@ -572,6 +572,39 @@ PK_INFO_JSON=$(mysql_query_silent "SELECT c.table_schema, c.table_name, c.column
 FULLTEXT_COLS_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name, data_type FROM information_schema.columns WHERE table_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND data_type='fulltext';" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], data_type:.[3]}]')
 FULLTEXT_COLS_COUNT=$(printf '%s' "$FULLTEXT_COLS_JSON" | jq -r 'length')
 
+# 14) MySQL 8.0+ specific modeling checks (best-effort)
+# 14a) JSON columns without generated columns (virtual/stored) for indexing
+JSON_NO_GEN_JSON=$(mysql_query_silent "SELECT c.table_schema, c.table_name, c.column_name FROM information_schema.columns c WHERE c.data_type='json' AND c.table_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND NOT EXISTS (SELECT 1 FROM information_schema.columns g WHERE g.table_schema=c.table_schema AND g.table_name=c.table_name AND (g.extra LIKE '%VIRTUAL%' OR g.extra LIKE '%STORED%'));" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2]}]')
+JSON_NO_GEN_COUNT=$(printf '%s' "$JSON_NO_GEN_JSON" | jq -r 'length')
+
+# 14b) invisible indexes (MySQL: IS_VISIBLE='NO', MariaDB: IGNORED='YES')
+# We detect MariaDB by VERSION() string containing 'MariaDB'
+case "$MYSQL_VERSION" in
+  *MariaDB*)
+    INVISIBLE_IDX_JSON=$(mysql_query_silent "SELECT table_schema, table_name, index_name FROM information_schema.statistics WHERE ignored='YES' AND table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], index:.[2]}]')
+    ;;
+  *)
+    INVISIBLE_IDX_JSON=$(mysql_query_silent "SELECT table_schema, table_name, index_name FROM information_schema.statistics WHERE is_visible='NO' AND table_schema NOT IN ('sys','mysql','performance_schema','information_schema');" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], index:.[2]}]')
+    ;;
+esac
+INVISIBLE_IDX_COUNT=$(printf '%s' "$INVISIBLE_IDX_JSON" | jq -r 'length')
+
+# 14c) CHECK constraints (MySQL 8.0.16+; MariaDB differs)
+# best-effort: only on MySQL >=8.0.16 and non-MariaDB
+CHECK_CONSTRAINTS_JSON='[]'
+CHECK_CONSTRAINTS_COUNT=0
+if [ "$MYSQL_VERSION_MAJOR" -ge 8 ] && [ "$MYSQL_VERSION_MINOR" -ge 0 ]; then
+  if [ "$MYSQL_VERSION_MAJOR" -gt 8 ] || [ "$MYSQL_VERSION_MINOR" -gt 0 ] || [ "$MYSQL_VERSION_PATCH" -ge 16 ]; then
+    case "$MYSQL_VERSION" in
+      *MariaDB*) : ;;
+      *)
+        CHECK_CONSTRAINTS_JSON=$(mysql_query_silent "SELECT constraint_schema, table_name, constraint_name FROM information_schema.table_constraints WHERE constraint_type='CHECK' AND constraint_schema NOT IN ('sys','mysql','performance_schema','information_schema');" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], constraint:.[2]}]')
+        CHECK_CONSTRAINTS_COUNT=$(printf '%s' "$CHECK_CONSTRAINTS_JSON" | jq -r 'length')
+        ;;
+    esac
+  fi
+fi
+
 PK_NAMING_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(.column != "id" and .column != (.table + "_id")) | {schema, table, column}]')
 PK_NAMING_ISSUES_COUNT=$(printf '%s' "$PK_NAMING_ISSUES_JSON" | jq -r 'length')
 
@@ -1072,6 +1105,12 @@ if [ "$JSON" -eq 1 ]; then
     --argjson pk_surrogate_issues "$PK_SURROGATE_ISSUES_JSON" \
     --arg fulltext_cols_count "$FULLTEXT_COLS_COUNT" \
     --argjson fulltext_cols "$FULLTEXT_COLS_JSON" \
+    --arg json_no_gen_count "$JSON_NO_GEN_COUNT" \
+    --argjson json_no_gen "$JSON_NO_GEN_JSON" \
+    --arg invisible_idx_count "$INVISIBLE_IDX_COUNT" \
+    --argjson invisible_idx "$INVISIBLE_IDX_JSON" \
+    --arg check_constraints_count "$CHECK_CONSTRAINTS_COUNT" \
+    --argjson check_constraints "$CHECK_CONSTRAINTS_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1287,6 +1326,12 @@ if [ "$JSON" -eq 1 ]; then
       pk_surrogate_issues:$pk_surrogate_issues,
       fulltext_cols_count:$fulltext_cols_count,
       fulltext_cols:$fulltext_cols,
+      json_no_gen_count:$json_no_gen_count,
+      json_no_gen:$json_no_gen,
+      invisible_idx_count:$invisible_idx_count,
+      invisible_idx:$invisible_idx,
+      check_constraints_count:$check_constraints_count,
+      check_constraints:$check_constraints,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1479,6 +1524,26 @@ section "Fulltext"
 info "Fulltext columns: $FULLTEXT_COLS_COUNT"
 if [ "$(num "$FULLTEXT_COLS_COUNT")" -gt 0 ]; then
   printf '%s' "$FULLTEXT_COLS_JSON" | jq -r '.[:10][] | "[INFO] FULLTEXT: " + .schema + "." + .table + "." + .column'
+fi
+
+section "MySQL 8.0+ Modeling"
+# JSON indexability check
+info "JSON columns without generated cols for indexing: $JSON_NO_GEN_COUNT"
+if [ "$(num "$JSON_NO_GEN_COUNT")" -gt 0 ]; then
+  printf '%s' "$JSON_NO_GEN_JSON" | jq -r '.[:10][] | "[INFO] JSON without generated cols: " + .schema + "." + .table + "." + .column'
+fi
+
+# Invisible indexes
+info "Invisible indexes: $INVISIBLE_IDX_COUNT"
+if [ "$(num "$INVISIBLE_IDX_COUNT")" -gt 0 ]; then
+  printf '%s' "$INVISIBLE_IDX_JSON" | jq -r '.[:10][] | "[INFO] INVISIBLE index: " + .schema + "." + .table + "." + .index'
+fi
+
+# CHECK constraints (informational)
+if [ "$(num "$CHECK_CONSTRAINTS_COUNT")" -gt 0 ]; then
+  info "CHECK constraints: $CHECK_CONSTRAINTS_COUNT"
+else
+  info "CHECK constraints: 0"
 fi
 
 section "Replication"
