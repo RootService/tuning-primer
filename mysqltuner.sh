@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="1.8.0-devel"
+VERSION="1.9.0-devel"
 
 usage() {
   cat <<USAGE
@@ -425,11 +425,22 @@ INNODB_REDO_LOG_CAPACITY=$(kv_get "$VARS_TSV" innodb_redo_log_capacity)
 INNODB_FILE_PER_TABLE=$(kv_get "$VARS_TSV" innodb_file_per_table)
 INNODB_FLUSH_METHOD=$(kv_get "$VARS_TSV" innodb_flush_method)
 
+INNODB_LOG_WAITS=$(kv_get "$STATUS_TSV" Innodb_log_waits)
+INNODB_LOG_WRITE_REQ=$(kv_get "$STATUS_TSV" Innodb_log_write_requests)
+INNODB_OS_LOG_FSYNCS=$(kv_get "$STATUS_TSV" Innodb_os_log_fsyncs)
+INNODB_OS_LOG_WRITTEN=$(kv_get "$STATUS_TSV" Innodb_os_log_written)
+
 THREAD_CACHE_SIZE=$(kv_get "$VARS_TSV" thread_cache_size)
 TABLE_OPEN_CACHE=$(kv_get "$VARS_TSV" table_open_cache)
 OPENED_TABLES=$(kv_get "$STATUS_TSV" Opened_tables)
+OPENED_TABLE_DEFS=$(kv_get "$STATUS_TSV" Opened_table_definitions)
 
 MAX_ALLOWED_PACKET=$(kv_get "$VARS_TSV" max_allowed_packet)
+
+# Files / limits
+OPEN_FILES_LIMIT=$(kv_get "$VARS_TSV" open_files_limit)
+OPEN_FILES=$(kv_get "$STATUS_TSV" Open_files)
+TABLE_DEF_CACHE=$(kv_get "$VARS_TSV" table_definition_cache)
 
 # MyISAM / key buffer metrics
 KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
@@ -563,6 +574,10 @@ if [ "$JSON" -eq 1 ]; then
     --arg aborted_connects_pct "$ABORT_PCT" \
     --arg opened_tables_per_s "$OPENED_TABLES_PS" \
     --arg open_tables "$OPEN_TABLES" \
+    --arg opened_table_definitions "$OPENED_TABLE_DEFS" \
+    --arg open_files_limit "$OPEN_FILES_LIMIT" \
+    --arg open_files "$OPEN_FILES" \
+    --arg table_definition_cache "$TABLE_DEF_CACHE" \
     --arg slow_query_log "$SLOW_QUERY_LOG" \
     --arg slow_queries "$SLOW_QUERIES" \
     --arg innodb_buffer_pool_size "$INNODB_BP_SIZE" \
@@ -575,6 +590,10 @@ if [ "$JSON" -eq 1 ]; then
     --arg innodb_redo_log_capacity "$INNODB_REDO_LOG_CAPACITY" \
     --arg innodb_file_per_table "$INNODB_FILE_PER_TABLE" \
     --arg innodb_flush_method "$INNODB_FLUSH_METHOD" \
+    --arg innodb_log_waits "$INNODB_LOG_WAITS" \
+    --arg innodb_log_write_requests "$INNODB_LOG_WRITE_REQ" \
+    --arg innodb_os_log_fsyncs "$INNODB_OS_LOG_FSYNCS" \
+    --arg innodb_os_log_written "$INNODB_OS_LOG_WRITTEN" \
     --arg bind_address "$BIND_ADDRESS" \
     --arg skip_networking "$SKIP_NETWORKING" \
     --arg port "$PORT_VAR" \
@@ -642,6 +661,10 @@ if [ "$JSON" -eq 1 ]; then
       aborted_connects_pct:$aborted_connects_pct,
       opened_tables_per_s:$opened_tables_per_s,
       open_tables:$open_tables,
+      opened_table_definitions:$opened_table_definitions,
+      open_files_limit:$open_files_limit,
+      open_files:$open_files,
+      table_definition_cache:$table_definition_cache,
       slow_query_log:$slow_query_log,
       slow_queries:$slow_queries,
       innodb_buffer_pool_size:$innodb_buffer_pool_size,
@@ -654,6 +677,10 @@ if [ "$JSON" -eq 1 ]; then
       innodb_redo_log_capacity:$innodb_redo_log_capacity,
       innodb_file_per_table:$innodb_file_per_table,
       innodb_flush_method:$innodb_flush_method,
+      innodb_log_waits:$innodb_log_waits,
+      innodb_log_write_requests:$innodb_log_write_requests,
+      innodb_os_log_fsyncs:$innodb_os_log_fsyncs,
+      innodb_os_log_written:$innodb_os_log_written,
       bind_address:$bind_address,
       skip_networking:$skip_networking,
       port:$port,
@@ -888,6 +915,10 @@ elif [ "$(num "$INNODB_LOG_FILE_SIZE")" -gt 0 ]; then
   info "innodb_log_file_size: $(bytes_h "$INNODB_LOG_FILE_SIZE")"
 fi
 
+[ -n "$INNODB_LOG_WRITE_REQ" ] && info "Innodb_log_write_requests: $INNODB_LOG_WRITE_REQ"
+[ -n "$INNODB_LOG_WAITS" ] && info "Innodb_log_waits:          $INNODB_LOG_WAITS"
+[ "$(num "$INNODB_LOG_WAITS")" -gt 0 ] && warn "InnoDB log waits detected ($INNODB_LOG_WAITS) - consider larger innodb_log_buffer_size or faster disk" || true
+
 if [ "${INNODB_FLUSH_LOG_AT_TRX:-}" = "2" ] || [ "${INNODB_FLUSH_LOG_AT_TRX:-}" = "0" ]; then
   warn "innodb_flush_log_at_trx_commit=$INNODB_FLUSH_LOG_AT_TRX reduces durability"
 fi
@@ -913,13 +944,27 @@ else
 fi
 
 section "Table Open Cache"
-info "table_open_cache:  $TABLE_OPEN_CACHE"
-info "Open_tables:       $OPEN_TABLES"
-info "Opened_tables:     $OPENED_TABLES (~${OPENED_TABLES_PS}/s)"
+info "table_open_cache:        $TABLE_OPEN_CACHE"
+info "Open_tables:             $OPEN_TABLES"
+info "Opened_tables:           $OPENED_TABLES (~${OPENED_TABLES_PS}/s)"
+[ -n "$TABLE_DEF_CACHE" ] && info "table_definition_cache:   $TABLE_DEF_CACHE"
+[ -n "$OPENED_TABLE_DEFS" ] && info "Opened_table_definitions: $OPENED_TABLE_DEFS"
 # crude heuristic: if we open lots of tables per second, cache might be too small
 ots=$(printf "%s" "$OPENED_TABLES_PS" | awk -F. '{print $1}')
 ots=$(num "$ots")
 [ "$ots" -ge 1 ] && warn "High Opened_tables rate (~${OPENED_TABLES_PS}/s); consider increasing table_open_cache" || true
+
+section "Files"
+[ -n "$OPEN_FILES_LIMIT" ] && info "open_files_limit: $OPEN_FILES_LIMIT"
+[ -n "$OPEN_FILES" ] && info "Open_files:       $OPEN_FILES"
+
+ofl=$(num "$OPEN_FILES_LIMIT")
+of=$(num "$OPEN_FILES")
+if [ "$ofl" -gt 0 ] && [ "$of" -gt 0 ]; then
+  ofpct=$(pct "$of" "$ofl")
+  info "Open_files % of limit: ${ofpct}%"
+  [ "$ofpct" -ge 85 ] && warn "Open_files is high (${ofpct}% of open_files_limit)" || true
+fi
 
 section "Packet Size"
 info "max_allowed_packet: $(bytes_h "$MAX_ALLOWED_PACKET")"
