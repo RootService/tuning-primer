@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.62.1-devel"
+VERSION="3.63.0-devel"
 
 usage() {
   cat <<USAGE
@@ -790,6 +790,11 @@ TABLES_NO_INDEX_JSON=$(mysql_query_silent "SELECT t.table_schema, t.table_name F
 TABLES_NO_INDEX_COUNT=$(printf '%s' "$TABLES_NO_INDEX_JSON" | jq -r 'length')
 
 # Index quality checks (best-effort)
+
+# Worst selectivity indexes (best-effort)
+WORST_SELECTIVITY_JSON=$(mysql_query_silent "SELECT CONCAT(t.table_schema,'.',t.table_name) AS tbl, CONCAT(s.index_name,'(',s.column_name,')') AS idx, s.seq_in_index, s2.max_columns, s.cardinality, IFNULL(t.table_rows,0) AS est_rows, s.index_type, ROUND(((s.cardinality/IFNULL(t.table_rows,0.01))*100),2) AS sel FROM information_schema.statistics s JOIN information_schema.tables t ON s.table_schema=t.table_schema AND s.table_name=t.table_name JOIN (SELECT table_schema, table_name, index_name, MAX(seq_in_index) AS max_columns FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) AND index_type <> 'FULLTEXT' GROUP BY table_schema, table_name, index_name) s2 ON s.table_schema=s2.table_schema AND s.table_name=s2.table_name AND s.index_name=s2.index_name WHERE t.table_schema NOT IN ('mysql','information_schema','performance_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) AND IFNULL(t.table_rows,0) > 10 AND s.cardinality IS NOT NULL AND (s.cardinality/IFNULL(t.table_rows,0.01)) < 8.00 ORDER BY sel LIMIT 10;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {table:.[0], index:.[1], seq:(.[2]|tonumber), maxcol:(.[3]|tonumber), card:(.[4]|tonumber), est_rows:(.[5]|tonumber), type:.[6], selectivity_pct:(.[7]|tonumber)}]')
+WORST_SELECTIVITY_COUNT=$(printf '%s' "$WORST_SELECTIVITY_JSON" | jq -r 'length')
+
 DUPLICATE_INDEXES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, GROUP_CONCAT(index_name ORDER BY index_name) AS indexes, GROUP_CONCAT(DISTINCT column_name ORDER BY seq_in_index) AS cols, index_type, non_unique, COUNT(DISTINCT index_name) AS idx_count FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema, table_name, cols, index_type, non_unique HAVING COUNT(DISTINCT index_name) > 1;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], indexes:(.[2]|split(",")), columns:(.[3]|split(",")), index_type:.[4], non_unique:(.[5]|tonumber), count:(.[6]|tonumber)}]')
 DUPLICATE_INDEXES_COUNT=$(printf '%s' "$DUPLICATE_INDEXES_JSON" | jq -r 'length')
 
@@ -1055,6 +1060,9 @@ if [ -n "$DUMP_DIR" ]; then
       printf '\n```\n'
     } >"$DUMP_DIR/schema_documentation.md" 2>/dev/null || true
   fi
+
+  # worst_selectivity_indexes.csv
+  printf '%s' "$WORST_SELECTIVITY_JSON" | dump_csv_file "$DUMP_DIR/worst_selectivity_indexes.csv" "Table,Index,Seq,MaxCols,Cardinality,EstRows,Type,SelectivityPct" '.[] | [.table,.index,(.seq|tostring),(.maxcol|tostring),(.card|tostring),(.est_rows|tostring),(.type//""),(.selectivity_pct|tostring)] | @csv'
 
   # duplicate_indexes.csv
   printf '%s' "$DUPLICATE_INDEXES_JSON" | dump_csv_file "$DUMP_DIR/duplicate_indexes.csv" "Schema,Table,Indexes,Columns,IndexType,NonUnique" '.[] | [.schema,.table,(.indexes|join("|")),(.columns|join("|")),(.index_type//""),(.non_unique|tostring)] | @csv'
@@ -1627,6 +1635,14 @@ section "Indexes"
 info "Indexes: $INDEXES_COUNT"
 info "Tables with no indexes: $TABLES_NO_INDEX_COUNT"
 [ "$(num "$TABLES_NO_INDEX_COUNT")" -gt 0 ] && printf '%s' "$TABLES_NO_INDEX_JSON" | jq -r '.[:10][] | "[WARN] No index: " + .schema + "." + .table' || true
+
+info "Worst selectivity indexes: $WORST_SELECTIVITY_COUNT"
+if [ "$(num "$WORST_SELECTIVITY_COUNT")" -gt 0 ]; then
+  printf '%s' "$WORST_SELECTIVITY_JSON" | jq -r '.[] | "[INFO] Index: " + .index + "\n +-- COLUMN      : " + .table + "\n +-- NB SEQS     : " + (.seq|tostring) + "\n +-- NB COLS     : " + (.maxcol|tostring) + "\n +-- CARDINALITY : " + (.card|tostring) + "\n +-- NB ROWS     : " + (.est_rows|tostring) + "\n +-- TYPE        : " + (.type//"") + "\n +-- SELECTIVITY : " + (.selectivity_pct|tostring) + "%"' | head -n 40
+  # warn on very low selectivity
+  printf '%s' "$WORST_SELECTIVITY_JSON" | jq -r '.[] | select(.selectivity_pct < 25) | "[WARN] " + .index + " has a low selectivity (" + (.selectivity_pct|tostring) + "%)"' | head -n 10
+fi
+
 info "Duplicate indexes (same cols/type/unique): $DUPLICATE_INDEXES_COUNT"
 [ "$(num "$DUPLICATE_INDEXES_COUNT")" -gt 0 ] && printf '%s' "$DUPLICATE_INDEXES_JSON" | jq -r '.[:10][] | "[WARN] Duplicate indexes on " + .schema + "." + .table + ": " + (.indexes|join(",")) + " cols=" + (.columns|join(","))' || true
 
@@ -2333,6 +2349,8 @@ mysqltuner_emit_json() {
     --argjson indexes "$INDEXES_JSON" \
     --arg tables_no_index_count "$TABLES_NO_INDEX_COUNT" \
     --argjson tables_no_index "$TABLES_NO_INDEX_JSON" \
+    --arg worst_selectivity_count "$WORST_SELECTIVITY_COUNT" \
+    --argjson worst_selectivity_indexes "$WORST_SELECTIVITY_JSON" \
     --arg duplicate_indexes_count "$DUPLICATE_INDEXES_COUNT" \
     --argjson duplicate_indexes "$DUPLICATE_INDEXES_JSON" \
     --arg same_cols_diff_uniq_count "$SAME_COLS_DIFF_UNIQ_COUNT" \
@@ -2600,6 +2618,8 @@ mysqltuner_emit_json() {
       indexes:$indexes,
       tables_no_index_count:$tables_no_index_count,
       tables_no_index:$tables_no_index,
+      worst_selectivity_count:$worst_selectivity_count,
+      worst_selectivity_indexes:$worst_selectivity_indexes,
       duplicate_indexes_count:$duplicate_indexes_count,
       duplicate_indexes:$duplicate_indexes,
       same_cols_diff_uniq_count:$same_cols_diff_uniq_count,
