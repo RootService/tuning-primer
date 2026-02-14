@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="0.5.0-devel"
+VERSION="0.6.0-devel"
 
 usage() {
   cat <<USAGE
@@ -169,7 +169,6 @@ THREADS_RUNNING=$(kv_get "$STATUS_TSV" Threads_running)
 THREADS_CREATED=$(kv_get "$STATUS_TSV" Threads_created)
 CONNECTIONS=$(kv_get "$STATUS_TSV" Connections)
 ABORTED_CONNECTS=$(kv_get "$STATUS_TSV" Aborted_connects)
-ABORTED_CLIENTS=$(kv_get "$STATUS_TSV" Aborted_clients)
 
 SLOW_QUERY_LOG=$(kv_get "$VARS_TSV" slow_query_log)
 LONG_QUERY_TIME=$(kv_get "$VARS_TSV" long_query_time)
@@ -187,25 +186,28 @@ INNODB_BP_READ_REQ=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_read_requests)
 INNODB_BP_READS=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_reads)
 
 THREAD_CACHE_SIZE=$(kv_get "$VARS_TSV" thread_cache_size)
-OPEN_FILES_LIMIT=$(kv_get "$VARS_TSV" open_files_limit)
 TABLE_OPEN_CACHE=$(kv_get "$VARS_TSV" table_open_cache)
 OPENED_TABLES=$(kv_get "$STATUS_TSV" Opened_tables)
-OPEN_TABLES=$(kv_get "$STATUS_TSV" Open_tables)
 
 MAX_ALLOWED_PACKET=$(kv_get "$VARS_TSV" max_allowed_packet)
+
+# Security-related variables
+SKIP_NAME_RESOLVE=$(kv_get "$VARS_TSV" skip_name_resolve)
+LOCAL_INFILE=$(kv_get "$VARS_TSV" local_infile)
+REQUIRE_SECURE_TRANSPORT=$(kv_get "$VARS_TSV" require_secure_transport)
+HAVE_SSL=$(kv_get "$VARS_TSV" have_ssl)
+PERFORMANCE_SCHEMA=$(kv_get "$VARS_TSV" performance_schema)
 
 # Derived metrics
 QPS=$(rate_per_s "$QUESTIONS" "$UPTIME_S")
 ABORT_PCT=$(pct "$ABORTED_CONNECTS" "$CONNECTIONS")
-TC_HIT_PCT=0
-c=$(num "$CONNECTIONS")
-tc=$(num "$THREADS_CREATED")
-if [ "$c" -gt 0 ] && [ "$tc" -ge 0 ]; then
-  hits=$((c - tc))
-  [ "$hits" -lt 0 ] && hits=0
-  TC_HIT_PCT=$(pct "$hits" "$c")
-fi
 OPENED_TABLES_PS=$(rate_per_s "$OPENED_TABLES" "$UPTIME_S")
+
+# Try to read mysql.user (may fail if no privileges)
+USER_ROWS=$(mysql_query_silent "SELECT user,host,plugin,authentication_string FROM mysql.user" 2>/dev/null || true)
+if [ -z "$USER_ROWS" ]; then
+  USER_ROWS=$(mysql_query_silent "SELECT user,host,plugin,password FROM mysql.user" 2>/dev/null || true)
+fi
 
 # ---- Output (JSON) ---------------------------------------------------------
 if [ "$JSON" -eq 1 ]; then
@@ -220,26 +222,18 @@ if [ "$JSON" -eq 1 ]; then
     --arg threads_connected "$THREADS_CONNECTED" \
     --arg threads_running "$THREADS_RUNNING" \
     --arg threads_created "$THREADS_CREATED" \
-    --arg connections "$CONNECTIONS" \
-    --arg aborted_connects "$ABORTED_CONNECTS" \
     --arg aborted_connects_pct "$ABORT_PCT" \
-    --arg thread_cache_size "$THREAD_CACHE_SIZE" \
-    --arg thread_cache_hit_pct "$TC_HIT_PCT" \
-    --arg open_files_limit "$OPEN_FILES_LIMIT" \
-    --arg table_open_cache "$TABLE_OPEN_CACHE" \
-    --arg opened_tables "$OPENED_TABLES" \
     --arg opened_tables_per_s "$OPENED_TABLES_PS" \
-    --arg open_tables "$OPEN_TABLES" \
     --arg slow_query_log "$SLOW_QUERY_LOG" \
-    --arg long_query_time "$LONG_QUERY_TIME" \
     --arg slow_queries "$SLOW_QUERIES" \
-    --arg created_tmp_tables "$CREATED_TMP_TABLES" \
-    --arg created_tmp_disk_tables "$CREATED_TMP_DISK_TABLES" \
-    --arg tmp_table_size "$TMP_TABLE_SIZE" \
-    --arg max_heap_table_size "$MAX_HEAP_TABLE_SIZE" \
     --arg innodb_buffer_pool_size "$INNODB_BP_SIZE" \
     --arg innodb_buffer_pool_read_requests "$INNODB_BP_READ_REQ" \
     --arg innodb_buffer_pool_reads "$INNODB_BP_READS" \
+    --arg skip_name_resolve "$SKIP_NAME_RESOLVE" \
+    --arg local_infile "$LOCAL_INFILE" \
+    --arg require_secure_transport "$REQUIRE_SECURE_TRANSPORT" \
+    --arg have_ssl "$HAVE_SSL" \
+    --arg performance_schema "$PERFORMANCE_SCHEMA" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     '{
       version:$version,
@@ -252,26 +246,18 @@ if [ "$JSON" -eq 1 ]; then
       threads_connected:$threads_connected,
       threads_running:$threads_running,
       threads_created:$threads_created,
-      connections:$connections,
-      aborted_connects:$aborted_connects,
       aborted_connects_pct:$aborted_connects_pct,
-      thread_cache_size:$thread_cache_size,
-      thread_cache_hit_pct:$thread_cache_hit_pct,
-      open_files_limit:$open_files_limit,
-      table_open_cache:$table_open_cache,
-      opened_tables:$opened_tables,
       opened_tables_per_s:$opened_tables_per_s,
-      open_tables:$open_tables,
       slow_query_log:$slow_query_log,
-      long_query_time:$long_query_time,
       slow_queries:$slow_queries,
-      created_tmp_tables:$created_tmp_tables,
-      created_tmp_disk_tables:$created_tmp_disk_tables,
-      tmp_table_size:$tmp_table_size,
-      max_heap_table_size:$max_heap_table_size,
       innodb_buffer_pool_size:$innodb_buffer_pool_size,
       innodb_buffer_pool_read_requests:$innodb_buffer_pool_read_requests,
       innodb_buffer_pool_reads:$innodb_buffer_pool_reads,
+      skip_name_resolve:$skip_name_resolve,
+      local_infile:$local_infile,
+      require_secure_transport:$require_secure_transport,
+      have_ssl:$have_ssl,
+      performance_schema:$performance_schema,
       max_allowed_packet:$max_allowed_packet
     }'
   exit 0
@@ -296,41 +282,13 @@ info "Max_used_connections: $MAX_USED_CONNECTIONS"
 info "Threads_connected:    $THREADS_CONNECTED"
 info "Threads_running:      $THREADS_RUNNING"
 info "Threads_created:      $THREADS_CREATED"
-info "Connections:          $CONNECTIONS"
 info "Aborted_connects:     $ABORTED_CONNECTS (${ABORT_PCT}%)"
-
-if [ "$(num "$ABORTED_CONNECTS")" -gt 0 ] && [ "$ABORT_PCT" -ge 5 ]; then
-  warn "High aborted connect rate (${ABORT_PCT}%)"
-fi
-
-section "Thread Cache"
-info "thread_cache_size: $THREAD_CACHE_SIZE"
-info "Thread cache hit:  ${TC_HIT_PCT}% (approx via Connections - Threads_created)"
-if [ "$(num "$THREAD_CACHE_SIZE")" -gt 0 ] && [ "$TC_HIT_PCT" -lt 90 ]; then
-  warn "Low thread cache hit rate (${TC_HIT_PCT}%). Consider increasing thread_cache_size."
-fi
-
-section "Table Open Cache"
-info "open_files_limit:  $OPEN_FILES_LIMIT"
-info "table_open_cache:  $TABLE_OPEN_CACHE"
-info "Open_tables:       $OPEN_TABLES"
-info "Opened_tables:     $OPENED_TABLES (~${OPENED_TABLES_PS}/s)"
-if [ "$(num "$TABLE_OPEN_CACHE")" -gt 0 ] && [ "$(num "$OPENED_TABLES")" -gt 0 ] && [ "$(num "$UPTIME_S")" -gt 0 ]; then
-  if awk -v r="$OPENED_TABLES_PS" 'BEGIN{exit !(r>1)}'; then
-    warn "High table cache churn (Opened_tables ~${OPENED_TABLES_PS}/s). Consider increasing table_open_cache."
-  else
-    ok "Table cache churn looks OK (Opened_tables ~${OPENED_TABLES_PS}/s)."
-  fi
-fi
+[ "$(num "$ABORTED_CONNECTS")" -gt 0 ] && [ "$ABORT_PCT" -ge 5 ] && warn "High aborted connect rate (${ABORT_PCT}%)"
 
 section "Slow Query Log"
 [ -n "$SLOW_QUERY_LOG" ] && info "slow_query_log: $SLOW_QUERY_LOG"
 [ -n "$LONG_QUERY_TIME" ] && info "long_query_time: $LONG_QUERY_TIME"
-if [ "$(num "$SLOW_QUERIES")" -gt 0 ]; then
-  warn "Slow_queries: $SLOW_QUERIES"
-else
-  ok "Slow_queries: $SLOW_QUERIES"
-fi
+[ "$(num "$SLOW_QUERIES")" -gt 0 ] && warn "Slow_queries: $SLOW_QUERIES" || ok "Slow_queries: $SLOW_QUERIES"
 
 section "Temporary Tables"
 info "Created_tmp_tables:      $CREATED_TMP_TABLES"
@@ -342,11 +300,7 @@ tmp=$(num "$CREATED_TMP_TABLES")
 tmpdisk=$(num "$CREATED_TMP_DISK_TABLES")
 if [ "$tmp" -gt 0 ] && [ "$tmpdisk" -gt 0 ]; then
   p=$(pct "$tmpdisk" "$tmp")
-  if [ "$p" -ge 25 ]; then
-    warn "High tmp tables on disk: ${p}% (increase tmp_table_size/max_heap_table_size)"
-  else
-    ok "Tmp tables on disk: ${p}%"
-  fi
+  [ "$p" -ge 25 ] && warn "High tmp tables on disk: ${p}%" || ok "Tmp tables on disk: ${p}%"
 fi
 
 section "InnoDB"
@@ -359,13 +313,39 @@ if [ "$bprr" -gt 0 ]; then
   [ "$hit" -lt 0 ] && hit=0
   hp=$(pct "$hit" "$bprr")
   info "InnoDB BP hit rate: ${hp}%"
-  [ "$hp" -lt 95 ] && warn "Low InnoDB buffer pool hit rate (${hp}%)"
+  [ "$hp" -lt 95 ] && warn "Low InnoDB buffer pool hit rate (${hp}%)" || ok "InnoDB buffer pool hit rate (${hp}%)"
 fi
+
+section "Table Open Cache"
+info "table_open_cache:  $TABLE_OPEN_CACHE"
+info "Opened_tables:     $OPENED_TABLES (~${OPENED_TABLES_PS}/s)"
 
 section "Packet Size"
 info "max_allowed_packet: $(bytes_h "$MAX_ALLOWED_PACKET")"
-if [ "$(num "$MAX_ALLOWED_PACKET")" -lt 16777216 ]; then
-  warn "max_allowed_packet is below 16MiB; may cause issues with large queries/replication"
+[ "$(num "$MAX_ALLOWED_PACKET")" -lt 16777216 ] && warn "max_allowed_packet below 16MiB" || ok "max_allowed_packet looks OK"
+
+section "Security (basic)"
+[ -n "$SKIP_NAME_RESOLVE" ] && info "skip_name_resolve: $SKIP_NAME_RESOLVE"
+[ -n "$LOCAL_INFILE" ] && info "local_infile: $LOCAL_INFILE"
+[ -n "$HAVE_SSL" ] && info "have_ssl: $HAVE_SSL"
+[ -n "$REQUIRE_SECURE_TRANSPORT" ] && info "require_secure_transport: $REQUIRE_SECURE_TRANSPORT"
+[ -n "$PERFORMANCE_SCHEMA" ] && info "performance_schema: $PERFORMANCE_SCHEMA"
+
+[ "$LOCAL_INFILE" = "ON" ] && warn "local_infile is ON (consider OFF unless required)" || true
+[ "$REQUIRE_SECURE_TRANSPORT" = "OFF" ] && warn "require_secure_transport is OFF (consider ON if you require TLS)" || true
+
+if [ -n "$USER_ROWS" ]; then
+  # Look for anonymous users and wildcards
+  if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($1=="" && $2!=""){exit 0} END{exit 1}'; then
+    warn "Anonymous user accounts exist in mysql.user"
+  else
+    ok "No anonymous mysql.user rows detected (best-effort)"
+  fi
+  if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($2=="%"){exit 0} END{exit 1}'; then
+    warn "Accounts with host=% exist in mysql.user (review access)"
+  fi
+else
+  info "mysql.user not readable with current credentials (skipping user security checks)"
 fi
 
 ok "Collected: SHOW GLOBAL VARIABLES/STATUS"
