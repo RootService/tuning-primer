@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.4.0-devel"
+VERSION="3.5.0-devel"
 
 usage() {
   cat <<USAGE
@@ -482,6 +482,9 @@ OPEN_FILES_LIMIT=$(kv_get "$VARS_TSV" open_files_limit)
 OPEN_FILES=$(kv_get "$STATUS_TSV" Open_files)
 TABLE_DEF_CACHE=$(kv_get "$VARS_TSV" table_definition_cache)
 
+# Table definition cache sizing (best-effort)
+TOTAL_TABLES=$(mysql_query_silent "SELECT COUNT(*) FROM information_schema.tables;" | head -n 1 | tr -d '\r')
+
 # MyISAM / key buffer metrics
 KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
 KEY_READS=$(kv_get "$STATUS_TSV" Key_reads)
@@ -783,6 +786,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg open_files_limit "$OPEN_FILES_LIMIT" \
     --arg open_files "$OPEN_FILES" \
     --arg table_definition_cache "$TABLE_DEF_CACHE" \
+    --arg total_tables "$TOTAL_TABLES" \
     --arg table_open_cache_hits "$TABLE_OPEN_CACHE_HITS" \
     --arg table_open_cache_misses "$TABLE_OPEN_CACHE_MISSES" \
     --arg table_cache_hit_pct "${TABLE_CACHE_HIT_PCT:-}" \
@@ -934,6 +938,7 @@ if [ "$JSON" -eq 1 ]; then
       open_files_limit:$open_files_limit,
       open_files:$open_files,
       table_definition_cache:$table_definition_cache,
+      total_tables:$total_tables,
       table_open_cache_hits:$table_open_cache_hits,
       table_open_cache_misses:$table_open_cache_misses,
       table_cache_hit_pct:$table_cache_hit_pct,
@@ -1052,6 +1057,9 @@ fi
 
 echo "MySQLTuner POSIX port (WIP)"
 echo "--------------------------------"
+
+# Uptime note (like upstream): <24h may skew recommendations
+[ "$(num "$UPTIME_S")" -lt 86400 ] && warn "MySQL was started within the last 24 hours: recommendations may be inaccurate" || true
 info "Server version:  $SERVER_VERSION"
 info "Server flavor:   $SERVER_FLAVOR"
 [ -n "$SERVER_COMMENT" ] && info "Version comment: $SERVER_COMMENT"
@@ -1363,6 +1371,16 @@ info "Open_tables:             $OPEN_TABLES"
 info "Opened_tables:           $OPENED_TABLES (~${OPENED_TABLES_PS}/s)"
 [ -n "$TABLE_DEF_CACHE" ] && info "table_definition_cache:   $TABLE_DEF_CACHE"
 [ -n "$OPENED_TABLE_DEFS" ] && info "Opened_table_definitions: $OPENED_TABLE_DEFS"
+[ -n "$TOTAL_TABLES" ] && info "Total tables (I_S):       $TOTAL_TABLES"
+
+# Like upstream: table_definition_cache should be >= number of tables (or -1 autosizing)
+tdc=$(num "$TABLE_DEF_CACHE")
+nt=$(num "$TOTAL_TABLES")
+if [ "$tdc" -eq -1 ]; then
+  info "table_definition_cache is in autosizing mode (-1)"
+elif [ "$tdc" -gt 0 ] && [ "$nt" -gt 0 ] && [ "$tdc" -lt "$nt" ]; then
+  warn "table_definition_cache ($tdc) is less than number of tables ($nt)"
+fi
 # crude heuristic: if we open lots of tables per second, cache might be too small
 # table cache hit rate (best-effort)
 th=$(num "$TABLE_OPEN_CACHE_HITS")
