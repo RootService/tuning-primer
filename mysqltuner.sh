@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.48.0-devel"
+VERSION="3.48.1-devel"
 
 usage() {
   cat <<USAGE
@@ -737,14 +737,14 @@ if [ "$TBSTAT" -eq 1 ] || [ -n "$SCHEMA_DIR" ]; then
 fi
 
 # Index inventory (best-effort)
-INDEXES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, index_name, GROUP_CONCAT(column_name ORDER BY seq_in_index) AS cols, index_type, non_unique FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys') GROUP BY table_schema, table_name, index_name, index_type, non_unique ORDER BY table_schema, table_name, index_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], index:.[2], columns:(.[3]|split(",")), index_type:.[4], non_unique:(.[5]|tonumber)}]')
+INDEXES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, index_name, GROUP_CONCAT(column_name ORDER BY seq_in_index) AS cols, index_type, non_unique FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema, table_name, index_name, index_type, non_unique ORDER BY table_schema, table_name, index_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], index:.[2], columns:(.[3]|split(",")), index_type:.[4], non_unique:(.[5]|tonumber)}]')
 INDEXES_COUNT=$(printf '%s' "$INDEXES_JSON" | jq -r 'length')
 
-TABLES_NO_INDEX_JSON=$(mysql_query_silent "SELECT t.table_schema, t.table_name FROM information_schema.tables t WHERE t.table_type='BASE TABLE' AND t.table_schema NOT IN ('mysql','performance_schema','information_schema','sys') AND NOT EXISTS (SELECT 1 FROM information_schema.statistics s WHERE s.table_schema=t.table_schema AND s.table_name=t.table_name);" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1]}]')
+TABLES_NO_INDEX_JSON=$(mysql_query_silent "SELECT t.table_schema, t.table_name FROM information_schema.tables t WHERE t.table_type='BASE TABLE' AND t.table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) AND NOT EXISTS (SELECT 1 FROM information_schema.statistics s WHERE s.table_schema=t.table_schema AND s.table_name=t.table_name);" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1]}]')
 TABLES_NO_INDEX_COUNT=$(printf '%s' "$TABLES_NO_INDEX_JSON" | jq -r 'length')
 
 # Index quality checks (best-effort)
-DUPLICATE_INDEXES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, GROUP_CONCAT(index_name ORDER BY index_name) AS indexes, GROUP_CONCAT(column_name ORDER BY seq_in_index) AS cols, index_type, non_unique, COUNT(*) AS idx_count FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys') GROUP BY table_schema, table_name, cols, index_type, non_unique HAVING COUNT(DISTINCT index_name) > 1;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], indexes:(.[2]|split(",")), columns:(.[3]|split(",")), index_type:.[4], non_unique:(.[5]|tonumber), count:(.[6]|tonumber)}]')
+DUPLICATE_INDEXES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, GROUP_CONCAT(index_name ORDER BY index_name) AS indexes, GROUP_CONCAT(column_name ORDER BY seq_in_index) AS cols, index_type, non_unique, COUNT(*) AS idx_count FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema, table_name, cols, index_type, non_unique HAVING COUNT(DISTINCT index_name) > 1;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], indexes:(.[2]|split(",")), columns:(.[3]|split(",")), index_type:.[4], non_unique:(.[5]|tonumber), count:(.[6]|tonumber)}]')
 DUPLICATE_INDEXES_COUNT=$(printf '%s' "$DUPLICATE_INDEXES_JSON" | jq -r 'length')
 
 # Redundant/prefix indexes: if index A columns is a strict prefix of index B columns on same table
