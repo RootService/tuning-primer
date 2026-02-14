@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.61.0-devel"
+VERSION="3.62.0-devel"
 
 usage() {
   cat <<USAGE
@@ -34,6 +34,7 @@ Output options:
 
 Report modes:
   --tbstat                 (table metrics / per-table index listing; noisy)
+  --colstat                (try PROCEDURE ANALYSE for optimal fieldtype; disabled on MySQL 8+)
 
 Misc:
   --ignore-dbs <db1,db2>    (comma-separated)
@@ -61,7 +62,7 @@ cleanup() {
 }
 
 # ---- Argument parsing (POSIX-compatible) -----------------------------------
-HOST=""; PORT=""; SOCKET=""; USER=""; PASS=""; DEFAULTS_FILE=""; SILENT=0; JSON=0; DUMP_DIR=""; SCHEMA_DIR=""; REC_WARN=""; REC_OK=""; IGNORE_DBS=""; IGNORE_TABLES=""; TBSTAT=0
+HOST=""; PORT=""; SOCKET=""; USER=""; PASS=""; DEFAULTS_FILE=""; SILENT=0; JSON=0; DUMP_DIR=""; SCHEMA_DIR=""; REC_WARN=""; REC_OK=""; IGNORE_DBS=""; IGNORE_TABLES=""; TBSTAT=0; COLSTAT=0
 CVEFILE=""
 PASSWORDFILE=""
 MAX_PASSWORD_CHECKS=500
@@ -86,6 +87,7 @@ while [ $# -gt 0 ]; do
     --dump-dir) shift; DUMP_DIR="${1-}" ;;
     --schema-dir) shift; SCHEMA_DIR="${1-}" ;;
     --tbstat) TBSTAT=1 ;;
+    --colstat) COLSTAT=1 ;;
     --) shift; break ;;
     -*) die "unknown option: $1" ;;
     *) break ;;
@@ -734,6 +736,19 @@ TRIGGERS_JSON=$(mysql_query_silent "SELECT trigger_schema, trigger_name, event_o
 TRIGGERS_COUNT=$(printf '%s' "$TRIGGERS_JSON" | jq -r 'length')
 
 # mysql_tables (table metrics) - best-effort; gated by --tbstat
+# colstat (PROCEDURE ANALYSE) is removed in MySQL 8+, like upstream.
+if [ "$COLSTAT" -eq 1 ]; then
+  if [ "$(num "$MYSQL_VER_MAJ")" -ge 8 ]; then
+    case "$SERVER_VERSION" in
+      *MariaDB*) : ;; # MariaDB 10 might still have it; leave enabled best-effort
+      *)
+        COLSTAT=0
+        warn "MySQL 8.0+ removed PROCEDURE ANALYSE; disabling --colstat"
+        ;;
+    esac
+  fi
+fi
+
 TABLE_METRICS_JSON='[]'
 TABLE_METRICS_COUNT=0
 if [ "$TBSTAT" -eq 1 ] || [ -n "$SCHEMA_DIR" ]; then
@@ -927,8 +942,14 @@ if [ -n "$SCHEMA_DIR" ]; then
         fi
 
         printf '\n#### Columns\n\n'
-        mysql_query_silent "SELECT column_name, column_type, is_nullable FROM information_schema.columns WHERE table_schema='$db' AND table_name='$tb' ORDER BY ordinal_position;" 2>/dev/null | \
-          jq -Rnr '[inputs | select(length>0) | split("\t") | {name:.[0], type:.[1], nullable:.[2]}] | .[] | "- **" + .name + "**: " + (.type|ascii_upcase) + (if .nullable=="NO" then " NOT NULL" else " NULL" end)'
+        mysql_query_silent "SELECT column_name, column_type, is_nullable, column_default, column_key, extra FROM information_schema.columns WHERE table_schema='$db' AND table_name='$tb' ORDER BY ordinal_position;" 2>/dev/null | \
+          jq -Rnr '[inputs | select(length>0) | split("\t") | {name:.[0], type:.[1], nullable:.[2], def:.[3], key:.[4], extra:.[5]}]
+            | .[]
+            | "- **" + .name + "**: " + (.type|ascii_upcase)
+              + (if .nullable=="NO" then " NOT NULL" else " NULL" end)
+              + (if (.key|length)>0 then (" key="+.key) else "" end)
+              + (if (.extra|length)>0 then (" extra="+.extra) else "" end)
+              + (if (.def|length)>0 and .def!="NULL" then (" default="+.def) else "" end)'
 
         printf '\n#### Constraints\n\n'
         # CHECK constraints (best-effort) + clauses (MySQL 8+)
