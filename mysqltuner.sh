@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.55.1-devel"
+VERSION="3.56.0-devel"
 
 usage() {
   cat <<USAGE
@@ -898,6 +898,16 @@ if [ -n "$SCHEMA_DIR" ]; then
         printf '\n#### Columns\n\n'
         mysql_query_silent "SELECT column_name, column_type, is_nullable FROM information_schema.columns WHERE table_schema='$db' AND table_name='$tb' ORDER BY ordinal_position;" 2>/dev/null | \
           jq -Rnr '[inputs | select(length>0) | split("\t") | {name:.[0], type:.[1], nullable:.[2]}] | .[] | "- **" + .name + "**: " + (.type|ascii_upcase) + (if .nullable=="NO" then " NOT NULL" else " NULL" end)'
+
+        printf '\n#### Constraints\n\n'
+        # CHECK constraints (best-effort)
+        mysql_query_silent "SELECT constraint_name FROM information_schema.table_constraints WHERE constraint_type='CHECK' AND constraint_schema='$db' AND table_name='$tb' ORDER BY constraint_name;" 2>/dev/null | \
+          jq -Rnr '[inputs | select(length>0) | .] | if length==0 then ["*No CHECK constraints*" ] else map("- " + .) end | .[]'
+
+        printf '\n#### Foreign Keys\n\n'
+        # FK list (table -> referenced_table)
+        mysql_query_silent "SELECT constraint_name, referenced_table_name FROM information_schema.key_column_usage WHERE table_schema='$db' AND table_name='$tb' AND referenced_table_name IS NOT NULL GROUP BY constraint_name, referenced_table_name ORDER BY constraint_name;" 2>/dev/null | \
+          jq -Rnr '[inputs | select(length>0) | split("\t") | {name:.[0], ref:.[1]}] | if length==0 then ["*No FOREIGN KEY constraints*" ] else map("- " + .name + " -> " + .ref) end | .[]'
 
         printf '\n---\n\n'
       } | write_text_file "$SCHEMA_DIR/databases/$db/$tb.md"
