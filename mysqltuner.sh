@@ -1338,554 +1338,13 @@ fi
 check_replication
 
 # ---- Output (JSON) ---------------------------------------------------------
-# Build recommendation arrays from accumulated warn/ok messages
-RECOMMENDATIONS_JSON=$(printf '%s
-' "$REC_WARN" | awk 'NF{print}' | jq -Rsc 'split("\n") | map(select(length>0))')
-NOTES_JSON=$(printf '%s
-' "$REC_OK" | awk 'NF{print}' | jq -Rsc 'split("\n") | map(select(length>0))')
 
-if [ "$JSON" -eq 1 ]; then
-  jq -n \
-    --arg version "$SERVER_VERSION" \
-    --arg flavor "$SERVER_FLAVOR" \
-    --argjson recommendations "$RECOMMENDATIONS_JSON" \
-    --argjson notes "$NOTES_JSON" \
-    --arg version_comment "$SERVER_COMMENT" \
-    --arg uptime "$UPTIME" \
-    --arg qps "$QPS" \
-    --arg cps "$CPS" \
-    --arg bytes_received "$BYTES_RECEIVED" \
-    --arg bytes_sent "$BYTES_SENT" \
-    --arg bytes_received_per_s "$BYTES_RECEIVED_PS" \
-    --arg bytes_sent_per_s "$BYTES_SENT_PS" \
-    --arg com_select "$COM_SELECT" \
-    --arg com_insert "$COM_INSERT" \
-    --arg com_update "$COM_UPDATE" \
-    --arg com_delete "$COM_DELETE" \
-    --arg com_replace "$COM_REPLACE" \
-    --arg pct_reads "${PCT_READS:-}" \
-    --arg pct_writes "${PCT_WRITES:-}" \
-    --arg max_connections "$MAX_CONNECTIONS" \
-    --arg max_used_connections "$MAX_USED_CONNECTIONS" \
-    --arg max_used_connections_pct "${mupct:-}" \
-    --arg threads_connected "$THREADS_CONNECTED" \
-    --arg threads_running "$THREADS_RUNNING" \
-    --arg threads_created "$THREADS_CREATED" \
-    --arg thread_cache_size "$THREAD_CACHE_SIZE" \
-    --arg thread_cache_hit_pct "$THREAD_CACHE_HIT_PCT" \
-    --arg aborted_connects "$ABORTED_CONNECTS" \
-    --arg aborted_connects_pct "$ABORT_PCT" \
-    --arg aborted_clients "$ABORTED_CLIENTS" \
-    --arg aborted_clients_pct "$ABORTED_CLIENTS_PCT" \
-    --arg connection_errors_accept "$CONN_ERRORS_ACCEPT" \
-    --arg connection_errors_internal "$CONN_ERRORS_INTERNAL" \
-    --arg connection_errors_max_connections "$CONN_ERRORS_MAXCONN" \
-    --arg connection_errors_peer_address "$CONN_ERRORS_PEERADDR" \
-    --arg connection_errors_select "$CONN_ERRORS_SELECT" \
-    --arg connection_errors_tcpwrap "$CONN_ERRORS_TCPWRAP" \
-    --arg opened_tables_per_s "$OPENED_TABLES_PS" \
-    --arg open_tables "$OPEN_TABLES" \
-    --arg opened_table_definitions "$OPENED_TABLE_DEFS" \
-    --arg open_files_limit "$OPEN_FILES_LIMIT" \
-    --arg open_files "$OPEN_FILES" \
-    --arg table_definition_cache "$TABLE_DEF_CACHE" \
-    --arg total_tables "$TOTAL_TABLES" \
-    --arg innodb_data_bytes "$INNODB_DATA_BYTES" \
-    --arg innodb_bp_data_pct "${INNODB_BP_DATA_PCT:-}" \
-    --arg table_open_cache_hits "$TABLE_OPEN_CACHE_HITS" \
-    --arg table_open_cache_misses "$TABLE_OPEN_CACHE_MISSES" \
-    --arg table_cache_hit_pct "${TABLE_CACHE_HIT_PCT:-}" \
-    --arg table_locks_immediate "$TABLE_LOCKS_IMMEDIATE" \
-    --arg table_locks_waited "$TABLE_LOCKS_WAITED" \
-    --arg table_locks_waited_pct "$TABLE_LOCKS_WAITED_PCT" \
-    --arg table_locks_immediate_pct "${TABLE_LOCKS_IMMEDIATE_PCT:-}" \
-    --arg slow_query_log "$SLOW_QUERY_LOG" \
-    --arg slow_queries "$SLOW_QUERIES" \
-    --arg slow_queries_pct "$SLOW_QUERIES_PCT" \
-    --arg slow_queries_per_day "$SLOW_QUERIES_PER_DAY" \
-    --arg innodb_buffer_pool_size "$INNODB_BP_SIZE" \
-    --arg innodb_buffer_pool_instances "$INNODB_BP_INSTANCES" \
-    --arg innodb_buffer_pool_chunk_size "$INNODB_BP_CHUNK_SIZE" \
-    --arg innodb_buffer_pool_chunk_aligned "${INNODB_BP_CHUNK_ALIGNED:-}" \
-    --arg innodb_buffer_pool_read_requests "$INNODB_BP_READ_REQ" \
-    --arg innodb_buffer_pool_reads "$INNODB_BP_READS" \
-    --arg innodb_flush_log_at_trx_commit "$INNODB_FLUSH_LOG_AT_TRX" \
-    --arg innodb_log_buffer_size "$INNODB_LOG_BUFFER_SIZE" \
-    --arg innodb_log_file_size "$INNODB_LOG_FILE_SIZE" \
-    --arg innodb_log_files_in_group "$INNODB_LOG_FILES_IN_GROUP" \
-    --arg innodb_redo_log_capacity "$INNODB_REDO_LOG_CAPACITY" \
-    --arg innodb_log_size_pct "${INNODB_LOG_SIZE_PCT:-}" \
-    --arg innodb_file_per_table "$INNODB_FILE_PER_TABLE" \
-    --arg innodb_flush_method "$INNODB_FLUSH_METHOD" \
-    --arg innodb_log_waits "$INNODB_LOG_WAITS" \
-    --arg innodb_log_write_requests "$INNODB_LOG_WRITE_REQ" \
-    --arg innodb_log_writes "$INNODB_LOG_WRITES" \
-    --arg innodb_log_write_efficiency_pct "${INNODB_LOG_WRITE_EFF_PCT:-}" \
-    --arg innodb_os_log_fsyncs "$INNODB_OS_LOG_FSYNCS" \
-    --arg innodb_os_log_written "$INNODB_OS_LOG_WRITTEN" \
-    --arg innodb_buffer_pool_pages_total "$INNODB_BP_PAGES_TOTAL" \
-    --arg innodb_buffer_pool_pages_free "$INNODB_BP_PAGES_FREE" \
-    --arg innodb_buffer_pool_pages_dirty "$INNODB_BP_PAGES_DIRTY" \
-    --arg innodb_buffer_pool_bytes_data "$INNODB_BP_BYTES_DATA" \
-    --arg innodb_buffer_pool_bytes_free "$INNODB_BP_BYTES_FREE" \
-    --arg innodb_buffer_pool_free_pct "$INNODB_BP_FREE_PCT" \
-    --arg innodb_buffer_pool_used_pct "${INNODB_BP_USED_PCT:-}" \
-    --arg innodb_buffer_pool_dirty_pct "$INNODB_BP_DIRTY_PCT" \
-    --arg bind_address "$BIND_ADDRESS" \
-    --arg skip_networking "$SKIP_NETWORKING" \
-    --arg port "$PORT_VAR" \
-    --arg log_bin "$LOG_BIN" \
-    --arg binlog_format "$BINLOG_FORMAT" \
-    --arg sync_binlog "$SYNC_BINLOG" \
-    --arg binlog_cache_size "$BINLOG_CACHE_SIZE" \
-    --arg binlog_cache_use "$BINLOG_CACHE_USE" \
-    --arg binlog_cache_disk_use "$BINLOG_CACHE_DISK_USE" \
-    --arg binlog_cache_pct "${BINLOG_CACHE_PCT:-}" \
-    --arg gtid_mode "$GTID_MODE" \
-    --arg gtid_current_pos "$GTID_CURRENT_POS" \
-    --arg have_galera "$HAVE_GALERA" \
-    --arg galera_gcache_bytes "$GCACHE_SIZE_BYTES" \
-    --arg max_connect_errors "$MAX_CONNECT_ERRORS" \
-    --arg thread_handling "$THREAD_HANDLING" \
-    --arg have_threadpool "$HAVE_THREADPOOL" \
-    --arg skip_name_resolve "$SKIP_NAME_RESOLVE" \
-    --arg local_infile "$LOCAL_INFILE" \
-    --arg require_secure_transport "$REQUIRE_SECURE_TRANSPORT" \
-    --arg have_ssl "$HAVE_SSL" \
-    --arg performance_schema "$PERFORMANCE_SCHEMA" \
-    --arg performance_schema_memory_bytes "$PFS_MEMORY_BYTES" \
-    --arg sys_schema_installed "$SYS_SCHEMA_INSTALLED" \
-    --arg sys_schema_version "$SYS_SCHEMA_VERSION" \
-    --arg engines_enabled_csv "$ENGINES_ENABLED_CSV" \
-    --argjson engine_sizes "$ENGINE_SIZES_JSON" \
-    --arg fragmented_tables_count "$FRAGMENTED_TABLES_COUNT" \
-    --argjson fragmented_tables "$FRAGMENTED_TABLES_JSON" \
-    --arg tables_no_pk_count "$TABLES_NO_PK_COUNT" \
-    --argjson tables_no_pk "$TABLES_NO_PK_JSON" \
-    --arg large_tables_no_sec_index_count "$LARGE_TABLES_NO_SEC_INDEX_COUNT" \
-    --argjson large_tables_no_sec_index "$LARGE_TABLES_NO_SEC_INDEX_JSON" \
-    --arg fk_mismatches_count "$FK_MISMATCHES_COUNT" \
-    --argjson fk_mismatches "$FK_MISMATCHES_JSON" \
-    --arg non_innodb_tables_count "$NON_INNODB_TABLES_COUNT" \
-    --argjson non_innodb_tables "$NON_INNODB_TABLES_JSON" \
-    --arg unconstrained_id_count "$UNCONSTRAINED_ID_COUNT" \
-    --argjson unconstrained_id "$UNCONSTRAINED_ID_JSON" \
-    --arg fk_cascade_count "$FK_CASCADE_COUNT" \
-    --argjson fk_cascade "$FK_CASCADE_JSON" \
-    --arg empty_schemas_count "$EMPTY_SCHEMAS_COUNT" \
-    --argjson empty_schemas "$EMPTY_SCHEMAS_JSON" \
-    --arg nullable_cols_count "$NULLABLE_COLS_COUNT" \
-    --arg naming_table_issues_count "$NAMING_TABLE_ISSUES_COUNT" \
-    --argjson naming_table_issues "$NAMING_TABLE_ISSUES_JSON" \
-    --arg naming_col_issues_count "$NAMING_COL_ISSUES_COUNT" \
-    --argjson naming_col_issues "$NAMING_COL_ISSUES_JSON" \
-    --arg non_utf8_cols_count "$NON_UTF8_COLS_COUNT" \
-    --argjson non_utf8_cols "$NON_UTF8_COLS_JSON" \
-    --arg pk_naming_issues_count "$PK_NAMING_ISSUES_COUNT" \
-    --argjson pk_naming_issues "$PK_NAMING_ISSUES_JSON" \
-    --arg uuid_pk_issues_count "$UUID_PK_ISSUES_COUNT" \
-    --argjson uuid_pk_issues "$UUID_PK_ISSUES_JSON" \
-    --arg pk_surrogate_issues_count "$PK_SURROGATE_ISSUES_COUNT" \
-    --argjson pk_surrogate_issues "$PK_SURROGATE_ISSUES_JSON" \
-    --arg fulltext_cols_count "$FULLTEXT_COLS_COUNT" \
-    --argjson fulltext_cols "$FULLTEXT_COLS_JSON" \
-    --arg json_no_gen_count "$JSON_NO_GEN_COUNT" \
-    --argjson json_no_gen "$JSON_NO_GEN_JSON" \
-    --arg invisible_idx_count "$INVISIBLE_IDX_COUNT" \
-    --argjson invisible_idx "$INVISIBLE_IDX_JSON" \
-    --arg check_constraints_count "$CHECK_CONSTRAINTS_COUNT" \
-    --argjson check_constraints "$CHECK_CONSTRAINTS_JSON" \
-    --arg plugins_active_count "$PLUGINS_ACTIVE_COUNT" \
-    --argjson plugins_active "$PLUGINS_ACTIVE_JSON" \
-    --arg databases_count "$DATABASES_COUNT" \
-    --argjson databases_list "$DATABASES_LIST_JSON" \
-    --arg db_tables_count "$DB_TABLES_COUNT" \
-    --arg db_views_count "$DB_VIEWS_COUNT" \
-    --arg db_indexes_count "$DB_INDEXES_COUNT" \
-    --arg db_total_rows "$DB_TOTAL_ROWS" \
-    --arg db_data_bytes "$DB_DATA_BYTES" \
-    --arg db_index_bytes "$DB_INDEX_BYTES" \
-    --arg db_total_bytes "$DB_TOTAL_BYTES" \
-    --arg db_charsets_count "$DB_CHARSETS_COUNT" \
-    --argjson db_charsets "$DB_CHARSETS_JSON" \
-    --arg db_collations_count "$DB_COLLATIONS_COUNT" \
-    --argjson db_collations "$DB_COLLATIONS_JSON" \
-    --arg db_engines_count "$DB_ENGINES_COUNT" \
-    --argjson db_engines "$DB_ENGINES_JSON" \
-    --arg db_breakdown_count "$DB_BREAKDOWN_COUNT" \
-    --argjson db_breakdown "$DB_BREAKDOWN_JSON" \
-    --arg db_index_breakdown_count "$DB_INDEX_BREAKDOWN_COUNT" \
-    --argjson db_index_breakdown "$DB_INDEX_BREAKDOWN_JSON" \
-    --arg largest_tables_count "$LARGEST_TABLES_COUNT" \
-    --argjson largest_tables "$LARGEST_TABLES_JSON" \
-    --arg views_count "$VIEWS_COUNT" \
-    --argjson views "$VIEWS_JSON" \
-    --arg routines_count "$ROUTINES_COUNT" \
-    --argjson routines "$ROUTINES_JSON" \
-    --arg triggers_count "$TRIGGERS_COUNT" \
-    --argjson triggers "$TRIGGERS_JSON" \
-    --arg indexes_count "$INDEXES_COUNT" \
-    --argjson indexes "$INDEXES_JSON" \
-    --arg tables_no_index_count "$TABLES_NO_INDEX_COUNT" \
-    --argjson tables_no_index "$TABLES_NO_INDEX_JSON" \
-    --arg duplicate_indexes_count "$DUPLICATE_INDEXES_COUNT" \
-    --argjson duplicate_indexes "$DUPLICATE_INDEXES_JSON" \
-    --arg same_cols_diff_uniq_count "$SAME_COLS_DIFF_UNIQ_COUNT" \
-    --argjson same_cols_diff_uniq "$SAME_COLS_DIFF_UNIQ_JSON" \
-    --arg redundant_indexes_count "$REDUNDANT_INDEXES_COUNT" \
-    --argjson redundant_indexes "$REDUNDANT_INDEXES_JSON" \
-    --arg unique_redundant_pk_count "$UNIQUE_REDUNDANT_PK_COUNT" \
-    --argjson unique_redundant_pk "$UNIQUE_REDUNDANT_PK_JSON" \
-    --arg table_metrics_count "$TABLE_METRICS_COUNT" \
-    --argjson table_metrics "$TABLE_METRICS_JSON" \
-    --arg schema_dir "$SCHEMA_DIR" \
-    --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
-    --arg key_buffer_size "$KEY_BUFFER_SIZE" \
-    --arg key_read_requests "$KEY_READ_REQUESTS" \
-    --arg key_reads "$KEY_READS" \
-    --arg key_buffer_hit_pct "$KEY_BUFFER_HIT_PCT" \
-    --arg query_cache_size "$QCACHE_SIZE" \
-    --arg query_cache_type "$QCACHE_TYPE" \
-    --arg query_cache_limit "$QCACHE_LIMIT" \
-    --arg query_cache_min_res_unit "$QCACHE_MIN_RES_UNIT" \
-    --arg qcache_hits "$QCACHE_HITS" \
-    --arg qcache_inserts "$QCACHE_INSERTS" \
-    --arg qcache_lowmem_prunes "$QCACHE_LOWPRUNES" \
-    --arg qcache_not_cached "$QCACHE_NOT_CACHED" \
-    --arg qcache_free_memory "$QCACHE_FREE_MEM" \
-    --arg qcache_free_blocks "$QCACHE_FREE_BLOCKS" \
-    --arg qcache_total_blocks "$QCACHE_TOTAL_BLOCKS" \
-    --arg qcache_efficiency_pct "${QCACHE_EFF_PCT:-}" \
-    --arg qcache_hit_pct "$QCACHE_HIT_PCT" \
-    --arg qcache_free_blocks_pct "$QCACHE_FREE_BLOCKS_PCT" \
-    --arg qcache_used_pct "$QCACHE_USED_PCT" \
-    --arg qcache_prunes_per_day "$QCACHE_PRUNES_PER_DAY" \
-    --arg sort_merge_pct "${SORT_MERGE_PCT:-}" \
-    --arg joins_without_indexes "$JOINS_WITHOUT_INDEXES" \
-    --arg joins_without_indexes_per_day "$JOINS_WO_IDX_PER_DAY" \
-    --arg tmp_disk_pct "${TMP_DISK_PCT:-}" \
-    --arg select_full_join "$SELECT_FULL_JOIN" \
-    --arg select_full_range_join "$SELECT_FULL_RANGE_JOIN" \
-    --arg select_range_check "$SELECT_RANGE_CHECK" \
-    --arg handler_read_rnd_next "$HANDLER_READ_RND_NEXT" \
-    --arg handler_read_rnd "$HANDLER_READ_RND" \
-    --arg handler_read_first "$HANDLER_READ_FIRST" \
-    --arg handler_read_key "$HANDLER_READ_KEY" \
-    --arg handler_read_next "$HANDLER_READ_NEXT" \
-    --arg handler_read_prev "$HANDLER_READ_PREV" \
-    --arg handler_read_last "$HANDLER_READ_LAST" \
-    --arg mysql_user_readable "$MYSQL_USER_READABLE" \
-    --arg mysql_user_col4 "$USER_COL4" \
-    --arg passwordfile "$PASSWORDFILE" \
-    --arg max_password_checks "$MAX_PASSWORD_CHECKS" \
-    --arg ram_total_bytes "$RAM_TOTAL" \
-    --arg arch_bits "$ARCH_BITS" \
-    --arg arch_machine "$ARCH_MACHINE" \
-    --arg global_buffers_bytes "$GLOBAL_BUFFERS" \
-    --arg max_tmp_table_size "$MAX_TMP_TABLE_SIZE" \
-    --arg innodb_log_buffer_size "$INNODB_LOG_BUFFER_SIZE" \
-    --arg per_thread_buffers_bytes "$PER_THREAD_BUFFERS" \
-    --arg max_memory_estimate_bytes "$MAX_MEM" \
-    --arg max_memory_at_max_used_bytes "$MAX_MEM_AT_MAX_USED" \
-    --arg server_buffers_bytes "$SERVER_BUFFERS" \
-    --arg total_per_thread_buffers_bytes "$TOTAL_PER_THREAD_BUFFERS" \
-    --arg max_total_per_thread_buffers_bytes "$MAX_TOTAL_PER_THREAD_BUFFERS" \
-    --arg total_buffers_bytes "$TOTAL_BUFFERS" \
-    --arg max_total_buffers_bytes "$MAX_TOTAL_BUFFERS" \
-    --arg pct_max_used_memory "${PCT_MAX_USED_MEMORY:-}" \
-    --arg pct_max_peak_memory "${PCT_MAX_PEAK_MEMORY:-}" \
-    --arg max_used_memory_bytes "$MAX_TOTAL_BUFFERS" \
-    --arg max_peak_memory_bytes "$TOTAL_BUFFERS" \
-    --arg cve_found "$CVE_FOUND" \
-    --argjson cve_list "$CVE_LIST_JSON" \
-    --arg weak_password_hits "$WEAK_PASSWORD_HITS" \
-    --argjson weak_password_users "$WEAK_PASSWORD_USERS_JSON" \
-    --arg repl_role "$REPL_ROLE" \
-    --arg repl_io_running "$REPL_IO_RUNNING" \
-    --arg repl_sql_running "$REPL_SQL_RUNNING" \
-    --arg repl_seconds_behind "$REPL_SECONDS_BEHIND" \
-    --arg repl_source_host "$REPL_SOURCE_HOST" \
-    --arg repl_source_port "$REPL_SOURCE_PORT" \
-    --arg repl_last_io_error "$REPL_LAST_IO_ERROR" \
-    --arg repl_last_sql_error "$REPL_LAST_SQL_ERROR" \
-    --arg master_log_file "$MASTER_LOG_FILE" \
-    --arg master_log_pos "$MASTER_LOG_POS" \
-    '{
-      version:$version,
-      flavor:$flavor,
-      recommendations:$recommendations,
-      notes:$notes,
-      version_comment:$version_comment,
-      uptime:$uptime,
-      qps:$qps,
-      cps:$cps,
-      bytes_received:$bytes_received,
-      bytes_sent:$bytes_sent,
-      bytes_received_per_s:$bytes_received_per_s,
-      bytes_sent_per_s:$bytes_sent_per_s,
-      com_select:$com_select,
-      com_insert:$com_insert,
-      com_update:$com_update,
-      com_delete:$com_delete,
-      com_replace:$com_replace,
-      pct_reads:$pct_reads,
-      pct_writes:$pct_writes,
-      max_connections:$max_connections,
-      max_used_connections:$max_used_connections,
-      max_used_connections_pct:$max_used_connections_pct,
-      threads_connected:$threads_connected,
-      threads_running:$threads_running,
-      threads_created:$threads_created,
-      thread_cache_size:$thread_cache_size,
-      thread_cache_hit_pct:$thread_cache_hit_pct,
-      aborted_connects:$aborted_connects,
-      aborted_connects_pct:$aborted_connects_pct,
-      aborted_clients:$aborted_clients,
-      aborted_clients_pct:$aborted_clients_pct,
-      connection_errors:{
-        accept:$connection_errors_accept,
-        internal:$connection_errors_internal,
-        max_connections:$connection_errors_max_connections,
-        peer_address:$connection_errors_peer_address,
-        select:$connection_errors_select,
-        tcpwrap:$connection_errors_tcpwrap
-      },
-      opened_tables_per_s:$opened_tables_per_s,
-      open_tables:$open_tables,
-      opened_table_definitions:$opened_table_definitions,
-      open_files_limit:$open_files_limit,
-      open_files:$open_files,
-      table_definition_cache:$table_definition_cache,
-      total_tables:$total_tables,
-      innodb_data_bytes:$innodb_data_bytes,
-      innodb_bp_data_pct:$innodb_bp_data_pct,
-      table_open_cache_hits:$table_open_cache_hits,
-      table_open_cache_misses:$table_open_cache_misses,
-      table_cache_hit_pct:$table_cache_hit_pct,
-      table_locks_immediate:$table_locks_immediate,
-      table_locks_waited:$table_locks_waited,
-      table_locks_waited_pct:$table_locks_waited_pct,
-      table_locks_immediate_pct:$table_locks_immediate_pct,
-      slow_query_log:$slow_query_log,
-      slow_queries:$slow_queries,
-      slow_queries_pct:$slow_queries_pct,
-      slow_queries_per_day:$slow_queries_per_day,
-      innodb_buffer_pool_size:$innodb_buffer_pool_size,
-      innodb_buffer_pool_instances:$innodb_buffer_pool_instances,
-      innodb_buffer_pool_chunk_size:$innodb_buffer_pool_chunk_size,
-      innodb_buffer_pool_chunk_aligned:$innodb_buffer_pool_chunk_aligned,
-      innodb_buffer_pool_read_requests:$innodb_buffer_pool_read_requests,
-      innodb_buffer_pool_reads:$innodb_buffer_pool_reads,
-      innodb_flush_log_at_trx_commit:$innodb_flush_log_at_trx_commit,
-      innodb_log_buffer_size:$innodb_log_buffer_size,
-      innodb_log_file_size:$innodb_log_file_size,
-      innodb_log_files_in_group:$innodb_log_files_in_group,
-      innodb_redo_log_capacity:$innodb_redo_log_capacity,
-      innodb_log_size_pct:$innodb_log_size_pct,
-      innodb_file_per_table:$innodb_file_per_table,
-      innodb_flush_method:$innodb_flush_method,
-      innodb_log_waits:$innodb_log_waits,
-      innodb_log_write_requests:$innodb_log_write_requests,
-      innodb_log_writes:$innodb_log_writes,
-      innodb_log_write_efficiency_pct:$innodb_log_write_efficiency_pct,
-      innodb_os_log_fsyncs:$innodb_os_log_fsyncs,
-      innodb_os_log_written:$innodb_os_log_written,
-      innodb_buffer_pool_pages_total:$innodb_buffer_pool_pages_total,
-      innodb_buffer_pool_pages_free:$innodb_buffer_pool_pages_free,
-      innodb_buffer_pool_pages_dirty:$innodb_buffer_pool_pages_dirty,
-      innodb_buffer_pool_bytes_data:$innodb_buffer_pool_bytes_data,
-      innodb_buffer_pool_bytes_free:$innodb_buffer_pool_bytes_free,
-      innodb_buffer_pool_free_pct:$innodb_buffer_pool_free_pct,
-      innodb_buffer_pool_used_pct:$innodb_buffer_pool_used_pct,
-      innodb_buffer_pool_dirty_pct:$innodb_buffer_pool_dirty_pct,
-      bind_address:$bind_address,
-      skip_networking:$skip_networking,
-      port:$port,
-      log_bin:$log_bin,
-      binlog_format:$binlog_format,
-      sync_binlog:$sync_binlog,
-      binlog_cache_size:$binlog_cache_size,
-      binlog_cache_use:$binlog_cache_use,
-      binlog_cache_disk_use:$binlog_cache_disk_use,
-      binlog_cache_pct:$binlog_cache_pct,
-      gtid_mode:$gtid_mode,
-      gtid_current_pos:$gtid_current_pos,
-      have_galera:$have_galera,
-      galera_gcache_bytes:$galera_gcache_bytes,
-      max_connect_errors:$max_connect_errors,
-      thread_handling:$thread_handling,
-      have_threadpool:$have_threadpool,
-      skip_name_resolve:$skip_name_resolve,
-      local_infile:$local_infile,
-      require_secure_transport:$require_secure_transport,
-      have_ssl:$have_ssl,
-      performance_schema:$performance_schema,
-      performance_schema_memory_bytes:$performance_schema_memory_bytes,
-      sys_schema_installed:$sys_schema_installed,
-      sys_schema_version:$sys_schema_version,
-      engines_enabled_csv:$engines_enabled_csv,
-      engine_sizes:$engine_sizes,
-      fragmented_tables_count:$fragmented_tables_count,
-      fragmented_tables:$fragmented_tables,
-      tables_no_pk_count:$tables_no_pk_count,
-      tables_no_pk:$tables_no_pk,
-      large_tables_no_sec_index_count:$large_tables_no_sec_index_count,
-      large_tables_no_sec_index:$large_tables_no_sec_index,
-      fk_mismatches_count:$fk_mismatches_count,
-      fk_mismatches:$fk_mismatches,
-      non_innodb_tables_count:$non_innodb_tables_count,
-      non_innodb_tables:$non_innodb_tables,
-      unconstrained_id_count:$unconstrained_id_count,
-      unconstrained_id:$unconstrained_id,
-      fk_cascade_count:$fk_cascade_count,
-      fk_cascade:$fk_cascade,
-      empty_schemas_count:$empty_schemas_count,
-      empty_schemas:$empty_schemas,
-      nullable_cols_count:$nullable_cols_count,
-      naming_table_issues_count:$naming_table_issues_count,
-      naming_table_issues:$naming_table_issues,
-      naming_col_issues_count:$naming_col_issues_count,
-      naming_col_issues:$naming_col_issues,
-      non_utf8_cols_count:$non_utf8_cols_count,
-      non_utf8_cols:$non_utf8_cols,
-      pk_naming_issues_count:$pk_naming_issues_count,
-      pk_naming_issues:$pk_naming_issues,
-      uuid_pk_issues_count:$uuid_pk_issues_count,
-      uuid_pk_issues:$uuid_pk_issues,
-      pk_surrogate_issues_count:$pk_surrogate_issues_count,
-      pk_surrogate_issues:$pk_surrogate_issues,
-      fulltext_cols_count:$fulltext_cols_count,
-      fulltext_cols:$fulltext_cols,
-      json_no_gen_count:$json_no_gen_count,
-      json_no_gen:$json_no_gen,
-      invisible_idx_count:$invisible_idx_count,
-      invisible_idx:$invisible_idx,
-      check_constraints_count:$check_constraints_count,
-      check_constraints:$check_constraints,
-      plugins_active_count:$plugins_active_count,
-      plugins_active:$plugins_active,
-      databases_count:$databases_count,
-      databases_list:$databases_list,
-      db_tables_count:$db_tables_count,
-      db_views_count:$db_views_count,
-      db_indexes_count:$db_indexes_count,
-      db_total_rows:$db_total_rows,
-      db_data_bytes:$db_data_bytes,
-      db_index_bytes:$db_index_bytes,
-      db_total_bytes:$db_total_bytes,
-      db_charsets_count:$db_charsets_count,
-      db_charsets:$db_charsets,
-      db_collations_count:$db_collations_count,
-      db_collations:$db_collations,
-      db_engines_count:$db_engines_count,
-      db_engines:$db_engines,
-      db_breakdown_count:$db_breakdown_count,
-      db_breakdown:$db_breakdown,
-      db_index_breakdown_count:$db_index_breakdown_count,
-      db_index_breakdown:$db_index_breakdown,
-      largest_tables_count:$largest_tables_count,
-      largest_tables:$largest_tables,
-      views_count:$views_count,
-      views:$views,
-      routines_count:$routines_count,
-      routines:$routines,
-      triggers_count:$triggers_count,
-      triggers:$triggers,
-      indexes_count:$indexes_count,
-      indexes:$indexes,
-      tables_no_index_count:$tables_no_index_count,
-      tables_no_index:$tables_no_index,
-      duplicate_indexes_count:$duplicate_indexes_count,
-      duplicate_indexes:$duplicate_indexes,
-      same_cols_diff_uniq_count:$same_cols_diff_uniq_count,
-      same_cols_diff_uniq:$same_cols_diff_uniq,
-      redundant_indexes_count:$redundant_indexes_count,
-      redundant_indexes:$redundant_indexes,
-      unique_redundant_pk_count:$unique_redundant_pk_count,
-      unique_redundant_pk:$unique_redundant_pk,
-      table_metrics_count:$table_metrics_count,
-      table_metrics:$table_metrics,
-      schema_dir:$schema_dir,
-      max_allowed_packet:$max_allowed_packet,
-      key_buffer_size:$key_buffer_size,
-      key_read_requests:$key_read_requests,
-      key_reads:$key_reads,
-      key_buffer_hit_pct:$key_buffer_hit_pct,
-      query_cache_size:$query_cache_size,
-      query_cache_type:$query_cache_type,
-      query_cache_limit:$query_cache_limit,
-      query_cache_min_res_unit:$query_cache_min_res_unit,
-      qcache_hits:$qcache_hits,
-      qcache_inserts:$qcache_inserts,
-      qcache_lowmem_prunes:$qcache_lowmem_prunes,
-      qcache_not_cached:$qcache_not_cached,
-      qcache_free_memory:$qcache_free_memory,
-      qcache_free_blocks:$qcache_free_blocks,
-      qcache_total_blocks:$qcache_total_blocks,
-      qcache_efficiency_pct:$qcache_efficiency_pct,
-      qcache_hit_pct:$qcache_hit_pct,
-      qcache_free_blocks_pct:$qcache_free_blocks_pct,
-      qcache_used_pct:$qcache_used_pct,
-      qcache_prunes_per_day:$qcache_prunes_per_day,
-      sort_merge_pct:$sort_merge_pct,
-      joins_without_indexes:$joins_without_indexes,
-      joins_without_indexes_per_day:$joins_without_indexes_per_day,
-      tmp_disk_pct:$tmp_disk_pct,
-      select_full_join:$select_full_join,
-      select_full_range_join:$select_full_range_join,
-      select_range_check:$select_range_check,
-      handler_read_rnd_next:$handler_read_rnd_next,
-      handler_read_rnd:$handler_read_rnd,
-      handler_read_first:$handler_read_first,
-      handler_read_key:$handler_read_key,
-      handler_read_next:$handler_read_next,
-      handler_read_prev:$handler_read_prev,
-      handler_read_last:$handler_read_last,
-      mysql_user_readable:$mysql_user_readable,
-      mysql_user_col4:$mysql_user_col4,
-      passwordfile:$passwordfile,
-      max_password_checks:$max_password_checks,
-      ram_total_bytes:$ram_total_bytes,
-      arch_bits:$arch_bits,
-      arch_machine:$arch_machine,
-      global_buffers_bytes:$global_buffers_bytes,
-      max_tmp_table_size:$max_tmp_table_size,
-      innodb_log_buffer_size:$innodb_log_buffer_size,
-      per_thread_buffers_bytes:$per_thread_buffers_bytes,
-      max_memory_estimate_bytes:$max_memory_estimate_bytes,
-      max_memory_at_max_used_bytes:$max_memory_at_max_used_bytes,
-      server_buffers_bytes:$server_buffers_bytes,
-      total_per_thread_buffers_bytes:$total_per_thread_buffers_bytes,
-      max_total_per_thread_buffers_bytes:$max_total_per_thread_buffers_bytes,
-      total_buffers_bytes:$total_buffers_bytes,
-      max_total_buffers_bytes:$max_total_buffers_bytes,
-      pct_max_used_memory:$pct_max_used_memory,
-      pct_max_peak_memory:$pct_max_peak_memory,
-      max_used_memory_bytes:$max_used_memory_bytes,
-      max_peak_memory_bytes:$max_peak_memory_bytes,
-      cve_found:$cve_found,
-      cve_list:$cve_list,
-      weak_password_hits:$weak_password_hits,
-      weak_password_users:$weak_password_users,
-      replication:{
-        role:$repl_role,
-        io_running:$repl_io_running,
-        sql_running:$repl_sql_running,
-        seconds_behind:$repl_seconds_behind,
-        source_host:$repl_source_host,
-        source_port:$repl_source_port,
-        last_io_error:$repl_last_io_error,
-        last_sql_error:$repl_last_sql_error,
-        master_log_file:$master_log_file,
-        master_log_pos:$master_log_pos
-      }
-    }'
-  exit 0
-fi
-
-# ---- Output (human) --------------------------------------------------------
-[ "$SILENT" -eq 1 ] && exit 0
-
+mysqltuner_human() {
+  # human-readable output; uses info/warn/ok which honor SILENT
+  if [ "$SILENT" -eq 0 ]; then
+    echo "MySQLTuner POSIX port (WIP)"
+    echo "--------------------------------"
+  fi
 echo "MySQLTuner POSIX port (WIP)"
 echo "--------------------------------"
 
@@ -2581,5 +2040,557 @@ section "Security (basic)"
 
 ok "Collected: SHOW GLOBAL VARIABLES/STATUS"
 warn "Next: implement more MySQLTuner-perl checks for feature parity."
+}
 
+mysqltuner_emit_json() {
+  # Build recommendation arrays from accumulated warn/ok messages
+  RECOMMENDATIONS_JSON=$(printf '%s\n' "$REC_WARN" | awk 'NF{print}' | jq -Rsc 'split("\n") | map(select(length>0))')
+  NOTES_JSON=$(printf '%s\n' "$REC_OK" | awk 'NF{print}' | jq -Rsc 'split("\n") | map(select(length>0))')
+
+    jq -n \
+    --arg version "$SERVER_VERSION" \
+    --arg flavor "$SERVER_FLAVOR" \
+    --argjson recommendations "$RECOMMENDATIONS_JSON" \
+    --argjson notes "$NOTES_JSON" \
+    --arg version_comment "$SERVER_COMMENT" \
+    --arg uptime "$UPTIME" \
+    --arg qps "$QPS" \
+    --arg cps "$CPS" \
+    --arg bytes_received "$BYTES_RECEIVED" \
+    --arg bytes_sent "$BYTES_SENT" \
+    --arg bytes_received_per_s "$BYTES_RECEIVED_PS" \
+    --arg bytes_sent_per_s "$BYTES_SENT_PS" \
+    --arg com_select "$COM_SELECT" \
+    --arg com_insert "$COM_INSERT" \
+    --arg com_update "$COM_UPDATE" \
+    --arg com_delete "$COM_DELETE" \
+    --arg com_replace "$COM_REPLACE" \
+    --arg pct_reads "${PCT_READS:-}" \
+    --arg pct_writes "${PCT_WRITES:-}" \
+    --arg max_connections "$MAX_CONNECTIONS" \
+    --arg max_used_connections "$MAX_USED_CONNECTIONS" \
+    --arg max_used_connections_pct "${mupct:-}" \
+    --arg threads_connected "$THREADS_CONNECTED" \
+    --arg threads_running "$THREADS_RUNNING" \
+    --arg threads_created "$THREADS_CREATED" \
+    --arg thread_cache_size "$THREAD_CACHE_SIZE" \
+    --arg thread_cache_hit_pct "$THREAD_CACHE_HIT_PCT" \
+    --arg aborted_connects "$ABORTED_CONNECTS" \
+    --arg aborted_connects_pct "$ABORT_PCT" \
+    --arg aborted_clients "$ABORTED_CLIENTS" \
+    --arg aborted_clients_pct "$ABORTED_CLIENTS_PCT" \
+    --arg connection_errors_accept "$CONN_ERRORS_ACCEPT" \
+    --arg connection_errors_internal "$CONN_ERRORS_INTERNAL" \
+    --arg connection_errors_max_connections "$CONN_ERRORS_MAXCONN" \
+    --arg connection_errors_peer_address "$CONN_ERRORS_PEERADDR" \
+    --arg connection_errors_select "$CONN_ERRORS_SELECT" \
+    --arg connection_errors_tcpwrap "$CONN_ERRORS_TCPWRAP" \
+    --arg opened_tables_per_s "$OPENED_TABLES_PS" \
+    --arg open_tables "$OPEN_TABLES" \
+    --arg opened_table_definitions "$OPENED_TABLE_DEFS" \
+    --arg open_files_limit "$OPEN_FILES_LIMIT" \
+    --arg open_files "$OPEN_FILES" \
+    --arg table_definition_cache "$TABLE_DEF_CACHE" \
+    --arg total_tables "$TOTAL_TABLES" \
+    --arg innodb_data_bytes "$INNODB_DATA_BYTES" \
+    --arg innodb_bp_data_pct "${INNODB_BP_DATA_PCT:-}" \
+    --arg table_open_cache_hits "$TABLE_OPEN_CACHE_HITS" \
+    --arg table_open_cache_misses "$TABLE_OPEN_CACHE_MISSES" \
+    --arg table_cache_hit_pct "${TABLE_CACHE_HIT_PCT:-}" \
+    --arg table_locks_immediate "$TABLE_LOCKS_IMMEDIATE" \
+    --arg table_locks_waited "$TABLE_LOCKS_WAITED" \
+    --arg table_locks_waited_pct "$TABLE_LOCKS_WAITED_PCT" \
+    --arg table_locks_immediate_pct "${TABLE_LOCKS_IMMEDIATE_PCT:-}" \
+    --arg slow_query_log "$SLOW_QUERY_LOG" \
+    --arg slow_queries "$SLOW_QUERIES" \
+    --arg slow_queries_pct "$SLOW_QUERIES_PCT" \
+    --arg slow_queries_per_day "$SLOW_QUERIES_PER_DAY" \
+    --arg innodb_buffer_pool_size "$INNODB_BP_SIZE" \
+    --arg innodb_buffer_pool_instances "$INNODB_BP_INSTANCES" \
+    --arg innodb_buffer_pool_chunk_size "$INNODB_BP_CHUNK_SIZE" \
+    --arg innodb_buffer_pool_chunk_aligned "${INNODB_BP_CHUNK_ALIGNED:-}" \
+    --arg innodb_buffer_pool_read_requests "$INNODB_BP_READ_REQ" \
+    --arg innodb_buffer_pool_reads "$INNODB_BP_READS" \
+    --arg innodb_flush_log_at_trx_commit "$INNODB_FLUSH_LOG_AT_TRX" \
+    --arg innodb_log_buffer_size "$INNODB_LOG_BUFFER_SIZE" \
+    --arg innodb_log_file_size "$INNODB_LOG_FILE_SIZE" \
+    --arg innodb_log_files_in_group "$INNODB_LOG_FILES_IN_GROUP" \
+    --arg innodb_redo_log_capacity "$INNODB_REDO_LOG_CAPACITY" \
+    --arg innodb_log_size_pct "${INNODB_LOG_SIZE_PCT:-}" \
+    --arg innodb_file_per_table "$INNODB_FILE_PER_TABLE" \
+    --arg innodb_flush_method "$INNODB_FLUSH_METHOD" \
+    --arg innodb_log_waits "$INNODB_LOG_WAITS" \
+    --arg innodb_log_write_requests "$INNODB_LOG_WRITE_REQ" \
+    --arg innodb_log_writes "$INNODB_LOG_WRITES" \
+    --arg innodb_log_write_efficiency_pct "${INNODB_LOG_WRITE_EFF_PCT:-}" \
+    --arg innodb_os_log_fsyncs "$INNODB_OS_LOG_FSYNCS" \
+    --arg innodb_os_log_written "$INNODB_OS_LOG_WRITTEN" \
+    --arg innodb_buffer_pool_pages_total "$INNODB_BP_PAGES_TOTAL" \
+    --arg innodb_buffer_pool_pages_free "$INNODB_BP_PAGES_FREE" \
+    --arg innodb_buffer_pool_pages_dirty "$INNODB_BP_PAGES_DIRTY" \
+    --arg innodb_buffer_pool_bytes_data "$INNODB_BP_BYTES_DATA" \
+    --arg innodb_buffer_pool_bytes_free "$INNODB_BP_BYTES_FREE" \
+    --arg innodb_buffer_pool_free_pct "$INNODB_BP_FREE_PCT" \
+    --arg innodb_buffer_pool_used_pct "${INNODB_BP_USED_PCT:-}" \
+    --arg innodb_buffer_pool_dirty_pct "$INNODB_BP_DIRTY_PCT" \
+    --arg bind_address "$BIND_ADDRESS" \
+    --arg skip_networking "$SKIP_NETWORKING" \
+    --arg port "$PORT_VAR" \
+    --arg log_bin "$LOG_BIN" \
+    --arg binlog_format "$BINLOG_FORMAT" \
+    --arg sync_binlog "$SYNC_BINLOG" \
+    --arg binlog_cache_size "$BINLOG_CACHE_SIZE" \
+    --arg binlog_cache_use "$BINLOG_CACHE_USE" \
+    --arg binlog_cache_disk_use "$BINLOG_CACHE_DISK_USE" \
+    --arg binlog_cache_pct "${BINLOG_CACHE_PCT:-}" \
+    --arg gtid_mode "$GTID_MODE" \
+    --arg gtid_current_pos "$GTID_CURRENT_POS" \
+    --arg have_galera "$HAVE_GALERA" \
+    --arg galera_gcache_bytes "$GCACHE_SIZE_BYTES" \
+    --arg max_connect_errors "$MAX_CONNECT_ERRORS" \
+    --arg thread_handling "$THREAD_HANDLING" \
+    --arg have_threadpool "$HAVE_THREADPOOL" \
+    --arg skip_name_resolve "$SKIP_NAME_RESOLVE" \
+    --arg local_infile "$LOCAL_INFILE" \
+    --arg require_secure_transport "$REQUIRE_SECURE_TRANSPORT" \
+    --arg have_ssl "$HAVE_SSL" \
+    --arg performance_schema "$PERFORMANCE_SCHEMA" \
+    --arg performance_schema_memory_bytes "$PFS_MEMORY_BYTES" \
+    --arg sys_schema_installed "$SYS_SCHEMA_INSTALLED" \
+    --arg sys_schema_version "$SYS_SCHEMA_VERSION" \
+    --arg engines_enabled_csv "$ENGINES_ENABLED_CSV" \
+    --argjson engine_sizes "$ENGINE_SIZES_JSON" \
+    --arg fragmented_tables_count "$FRAGMENTED_TABLES_COUNT" \
+    --argjson fragmented_tables "$FRAGMENTED_TABLES_JSON" \
+    --arg tables_no_pk_count "$TABLES_NO_PK_COUNT" \
+    --argjson tables_no_pk "$TABLES_NO_PK_JSON" \
+    --arg large_tables_no_sec_index_count "$LARGE_TABLES_NO_SEC_INDEX_COUNT" \
+    --argjson large_tables_no_sec_index "$LARGE_TABLES_NO_SEC_INDEX_JSON" \
+    --arg fk_mismatches_count "$FK_MISMATCHES_COUNT" \
+    --argjson fk_mismatches "$FK_MISMATCHES_JSON" \
+    --arg non_innodb_tables_count "$NON_INNODB_TABLES_COUNT" \
+    --argjson non_innodb_tables "$NON_INNODB_TABLES_JSON" \
+    --arg unconstrained_id_count "$UNCONSTRAINED_ID_COUNT" \
+    --argjson unconstrained_id "$UNCONSTRAINED_ID_JSON" \
+    --arg fk_cascade_count "$FK_CASCADE_COUNT" \
+    --argjson fk_cascade "$FK_CASCADE_JSON" \
+    --arg empty_schemas_count "$EMPTY_SCHEMAS_COUNT" \
+    --argjson empty_schemas "$EMPTY_SCHEMAS_JSON" \
+    --arg nullable_cols_count "$NULLABLE_COLS_COUNT" \
+    --arg naming_table_issues_count "$NAMING_TABLE_ISSUES_COUNT" \
+    --argjson naming_table_issues "$NAMING_TABLE_ISSUES_JSON" \
+    --arg naming_col_issues_count "$NAMING_COL_ISSUES_COUNT" \
+    --argjson naming_col_issues "$NAMING_COL_ISSUES_JSON" \
+    --arg non_utf8_cols_count "$NON_UTF8_COLS_COUNT" \
+    --argjson non_utf8_cols "$NON_UTF8_COLS_JSON" \
+    --arg pk_naming_issues_count "$PK_NAMING_ISSUES_COUNT" \
+    --argjson pk_naming_issues "$PK_NAMING_ISSUES_JSON" \
+    --arg uuid_pk_issues_count "$UUID_PK_ISSUES_COUNT" \
+    --argjson uuid_pk_issues "$UUID_PK_ISSUES_JSON" \
+    --arg pk_surrogate_issues_count "$PK_SURROGATE_ISSUES_COUNT" \
+    --argjson pk_surrogate_issues "$PK_SURROGATE_ISSUES_JSON" \
+    --arg fulltext_cols_count "$FULLTEXT_COLS_COUNT" \
+    --argjson fulltext_cols "$FULLTEXT_COLS_JSON" \
+    --arg json_no_gen_count "$JSON_NO_GEN_COUNT" \
+    --argjson json_no_gen "$JSON_NO_GEN_JSON" \
+    --arg invisible_idx_count "$INVISIBLE_IDX_COUNT" \
+    --argjson invisible_idx "$INVISIBLE_IDX_JSON" \
+    --arg check_constraints_count "$CHECK_CONSTRAINTS_COUNT" \
+    --argjson check_constraints "$CHECK_CONSTRAINTS_JSON" \
+    --arg plugins_active_count "$PLUGINS_ACTIVE_COUNT" \
+    --argjson plugins_active "$PLUGINS_ACTIVE_JSON" \
+    --arg databases_count "$DATABASES_COUNT" \
+    --argjson databases_list "$DATABASES_LIST_JSON" \
+    --arg db_tables_count "$DB_TABLES_COUNT" \
+    --arg db_views_count "$DB_VIEWS_COUNT" \
+    --arg db_indexes_count "$DB_INDEXES_COUNT" \
+    --arg db_total_rows "$DB_TOTAL_ROWS" \
+    --arg db_data_bytes "$DB_DATA_BYTES" \
+    --arg db_index_bytes "$DB_INDEX_BYTES" \
+    --arg db_total_bytes "$DB_TOTAL_BYTES" \
+    --arg db_charsets_count "$DB_CHARSETS_COUNT" \
+    --argjson db_charsets "$DB_CHARSETS_JSON" \
+    --arg db_collations_count "$DB_COLLATIONS_COUNT" \
+    --argjson db_collations "$DB_COLLATIONS_JSON" \
+    --arg db_engines_count "$DB_ENGINES_COUNT" \
+    --argjson db_engines "$DB_ENGINES_JSON" \
+    --arg db_breakdown_count "$DB_BREAKDOWN_COUNT" \
+    --argjson db_breakdown "$DB_BREAKDOWN_JSON" \
+    --arg db_index_breakdown_count "$DB_INDEX_BREAKDOWN_COUNT" \
+    --argjson db_index_breakdown "$DB_INDEX_BREAKDOWN_JSON" \
+    --arg largest_tables_count "$LARGEST_TABLES_COUNT" \
+    --argjson largest_tables "$LARGEST_TABLES_JSON" \
+    --arg views_count "$VIEWS_COUNT" \
+    --argjson views "$VIEWS_JSON" \
+    --arg routines_count "$ROUTINES_COUNT" \
+    --argjson routines "$ROUTINES_JSON" \
+    --arg triggers_count "$TRIGGERS_COUNT" \
+    --argjson triggers "$TRIGGERS_JSON" \
+    --arg indexes_count "$INDEXES_COUNT" \
+    --argjson indexes "$INDEXES_JSON" \
+    --arg tables_no_index_count "$TABLES_NO_INDEX_COUNT" \
+    --argjson tables_no_index "$TABLES_NO_INDEX_JSON" \
+    --arg duplicate_indexes_count "$DUPLICATE_INDEXES_COUNT" \
+    --argjson duplicate_indexes "$DUPLICATE_INDEXES_JSON" \
+    --arg same_cols_diff_uniq_count "$SAME_COLS_DIFF_UNIQ_COUNT" \
+    --argjson same_cols_diff_uniq "$SAME_COLS_DIFF_UNIQ_JSON" \
+    --arg redundant_indexes_count "$REDUNDANT_INDEXES_COUNT" \
+    --argjson redundant_indexes "$REDUNDANT_INDEXES_JSON" \
+    --arg unique_redundant_pk_count "$UNIQUE_REDUNDANT_PK_COUNT" \
+    --argjson unique_redundant_pk "$UNIQUE_REDUNDANT_PK_JSON" \
+    --arg table_metrics_count "$TABLE_METRICS_COUNT" \
+    --argjson table_metrics "$TABLE_METRICS_JSON" \
+    --arg schema_dir "$SCHEMA_DIR" \
+    --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
+    --arg key_buffer_size "$KEY_BUFFER_SIZE" \
+    --arg key_read_requests "$KEY_READ_REQUESTS" \
+    --arg key_reads "$KEY_READS" \
+    --arg key_buffer_hit_pct "$KEY_BUFFER_HIT_PCT" \
+    --arg query_cache_size "$QCACHE_SIZE" \
+    --arg query_cache_type "$QCACHE_TYPE" \
+    --arg query_cache_limit "$QCACHE_LIMIT" \
+    --arg query_cache_min_res_unit "$QCACHE_MIN_RES_UNIT" \
+    --arg qcache_hits "$QCACHE_HITS" \
+    --arg qcache_inserts "$QCACHE_INSERTS" \
+    --arg qcache_lowmem_prunes "$QCACHE_LOWPRUNES" \
+    --arg qcache_not_cached "$QCACHE_NOT_CACHED" \
+    --arg qcache_free_memory "$QCACHE_FREE_MEM" \
+    --arg qcache_free_blocks "$QCACHE_FREE_BLOCKS" \
+    --arg qcache_total_blocks "$QCACHE_TOTAL_BLOCKS" \
+    --arg qcache_efficiency_pct "${QCACHE_EFF_PCT:-}" \
+    --arg qcache_hit_pct "$QCACHE_HIT_PCT" \
+    --arg qcache_free_blocks_pct "$QCACHE_FREE_BLOCKS_PCT" \
+    --arg qcache_used_pct "$QCACHE_USED_PCT" \
+    --arg qcache_prunes_per_day "$QCACHE_PRUNES_PER_DAY" \
+    --arg sort_merge_pct "${SORT_MERGE_PCT:-}" \
+    --arg joins_without_indexes "$JOINS_WITHOUT_INDEXES" \
+    --arg joins_without_indexes_per_day "$JOINS_WO_IDX_PER_DAY" \
+    --arg tmp_disk_pct "${TMP_DISK_PCT:-}" \
+    --arg select_full_join "$SELECT_FULL_JOIN" \
+    --arg select_full_range_join "$SELECT_FULL_RANGE_JOIN" \
+    --arg select_range_check "$SELECT_RANGE_CHECK" \
+    --arg handler_read_rnd_next "$HANDLER_READ_RND_NEXT" \
+    --arg handler_read_rnd "$HANDLER_READ_RND" \
+    --arg handler_read_first "$HANDLER_READ_FIRST" \
+    --arg handler_read_key "$HANDLER_READ_KEY" \
+    --arg handler_read_next "$HANDLER_READ_NEXT" \
+    --arg handler_read_prev "$HANDLER_READ_PREV" \
+    --arg handler_read_last "$HANDLER_READ_LAST" \
+    --arg mysql_user_readable "$MYSQL_USER_READABLE" \
+    --arg mysql_user_col4 "$USER_COL4" \
+    --arg passwordfile "$PASSWORDFILE" \
+    --arg max_password_checks "$MAX_PASSWORD_CHECKS" \
+    --arg ram_total_bytes "$RAM_TOTAL" \
+    --arg arch_bits "$ARCH_BITS" \
+    --arg arch_machine "$ARCH_MACHINE" \
+    --arg global_buffers_bytes "$GLOBAL_BUFFERS" \
+    --arg max_tmp_table_size "$MAX_TMP_TABLE_SIZE" \
+    --arg innodb_log_buffer_size "$INNODB_LOG_BUFFER_SIZE" \
+    --arg per_thread_buffers_bytes "$PER_THREAD_BUFFERS" \
+    --arg max_memory_estimate_bytes "$MAX_MEM" \
+    --arg max_memory_at_max_used_bytes "$MAX_MEM_AT_MAX_USED" \
+    --arg server_buffers_bytes "$SERVER_BUFFERS" \
+    --arg total_per_thread_buffers_bytes "$TOTAL_PER_THREAD_BUFFERS" \
+    --arg max_total_per_thread_buffers_bytes "$MAX_TOTAL_PER_THREAD_BUFFERS" \
+    --arg total_buffers_bytes "$TOTAL_BUFFERS" \
+    --arg max_total_buffers_bytes "$MAX_TOTAL_BUFFERS" \
+    --arg pct_max_used_memory "${PCT_MAX_USED_MEMORY:-}" \
+    --arg pct_max_peak_memory "${PCT_MAX_PEAK_MEMORY:-}" \
+    --arg max_used_memory_bytes "$MAX_TOTAL_BUFFERS" \
+    --arg max_peak_memory_bytes "$TOTAL_BUFFERS" \
+    --arg cve_found "$CVE_FOUND" \
+    --argjson cve_list "$CVE_LIST_JSON" \
+    --arg weak_password_hits "$WEAK_PASSWORD_HITS" \
+    --argjson weak_password_users "$WEAK_PASSWORD_USERS_JSON" \
+    --arg repl_role "$REPL_ROLE" \
+    --arg repl_io_running "$REPL_IO_RUNNING" \
+    --arg repl_sql_running "$REPL_SQL_RUNNING" \
+    --arg repl_seconds_behind "$REPL_SECONDS_BEHIND" \
+    --arg repl_source_host "$REPL_SOURCE_HOST" \
+    --arg repl_source_port "$REPL_SOURCE_PORT" \
+    --arg repl_last_io_error "$REPL_LAST_IO_ERROR" \
+    --arg repl_last_sql_error "$REPL_LAST_SQL_ERROR" \
+    --arg master_log_file "$MASTER_LOG_FILE" \
+    --arg master_log_pos "$MASTER_LOG_POS" \
+    '{
+      version:$version,
+      flavor:$flavor,
+      recommendations:$recommendations,
+      notes:$notes,
+      version_comment:$version_comment,
+      uptime:$uptime,
+      qps:$qps,
+      cps:$cps,
+      bytes_received:$bytes_received,
+      bytes_sent:$bytes_sent,
+      bytes_received_per_s:$bytes_received_per_s,
+      bytes_sent_per_s:$bytes_sent_per_s,
+      com_select:$com_select,
+      com_insert:$com_insert,
+      com_update:$com_update,
+      com_delete:$com_delete,
+      com_replace:$com_replace,
+      pct_reads:$pct_reads,
+      pct_writes:$pct_writes,
+      max_connections:$max_connections,
+      max_used_connections:$max_used_connections,
+      max_used_connections_pct:$max_used_connections_pct,
+      threads_connected:$threads_connected,
+      threads_running:$threads_running,
+      threads_created:$threads_created,
+      thread_cache_size:$thread_cache_size,
+      thread_cache_hit_pct:$thread_cache_hit_pct,
+      aborted_connects:$aborted_connects,
+      aborted_connects_pct:$aborted_connects_pct,
+      aborted_clients:$aborted_clients,
+      aborted_clients_pct:$aborted_clients_pct,
+      connection_errors:{
+        accept:$connection_errors_accept,
+        internal:$connection_errors_internal,
+        max_connections:$connection_errors_max_connections,
+        peer_address:$connection_errors_peer_address,
+        select:$connection_errors_select,
+        tcpwrap:$connection_errors_tcpwrap
+      },
+      opened_tables_per_s:$opened_tables_per_s,
+      open_tables:$open_tables,
+      opened_table_definitions:$opened_table_definitions,
+      open_files_limit:$open_files_limit,
+      open_files:$open_files,
+      table_definition_cache:$table_definition_cache,
+      total_tables:$total_tables,
+      innodb_data_bytes:$innodb_data_bytes,
+      innodb_bp_data_pct:$innodb_bp_data_pct,
+      table_open_cache_hits:$table_open_cache_hits,
+      table_open_cache_misses:$table_open_cache_misses,
+      table_cache_hit_pct:$table_cache_hit_pct,
+      table_locks_immediate:$table_locks_immediate,
+      table_locks_waited:$table_locks_waited,
+      table_locks_waited_pct:$table_locks_waited_pct,
+      table_locks_immediate_pct:$table_locks_immediate_pct,
+      slow_query_log:$slow_query_log,
+      slow_queries:$slow_queries,
+      slow_queries_pct:$slow_queries_pct,
+      slow_queries_per_day:$slow_queries_per_day,
+      innodb_buffer_pool_size:$innodb_buffer_pool_size,
+      innodb_buffer_pool_instances:$innodb_buffer_pool_instances,
+      innodb_buffer_pool_chunk_size:$innodb_buffer_pool_chunk_size,
+      innodb_buffer_pool_chunk_aligned:$innodb_buffer_pool_chunk_aligned,
+      innodb_buffer_pool_read_requests:$innodb_buffer_pool_read_requests,
+      innodb_buffer_pool_reads:$innodb_buffer_pool_reads,
+      innodb_flush_log_at_trx_commit:$innodb_flush_log_at_trx_commit,
+      innodb_log_buffer_size:$innodb_log_buffer_size,
+      innodb_log_file_size:$innodb_log_file_size,
+      innodb_log_files_in_group:$innodb_log_files_in_group,
+      innodb_redo_log_capacity:$innodb_redo_log_capacity,
+      innodb_log_size_pct:$innodb_log_size_pct,
+      innodb_file_per_table:$innodb_file_per_table,
+      innodb_flush_method:$innodb_flush_method,
+      innodb_log_waits:$innodb_log_waits,
+      innodb_log_write_requests:$innodb_log_write_requests,
+      innodb_log_writes:$innodb_log_writes,
+      innodb_log_write_efficiency_pct:$innodb_log_write_efficiency_pct,
+      innodb_os_log_fsyncs:$innodb_os_log_fsyncs,
+      innodb_os_log_written:$innodb_os_log_written,
+      innodb_buffer_pool_pages_total:$innodb_buffer_pool_pages_total,
+      innodb_buffer_pool_pages_free:$innodb_buffer_pool_pages_free,
+      innodb_buffer_pool_pages_dirty:$innodb_buffer_pool_pages_dirty,
+      innodb_buffer_pool_bytes_data:$innodb_buffer_pool_bytes_data,
+      innodb_buffer_pool_bytes_free:$innodb_buffer_pool_bytes_free,
+      innodb_buffer_pool_free_pct:$innodb_buffer_pool_free_pct,
+      innodb_buffer_pool_used_pct:$innodb_buffer_pool_used_pct,
+      innodb_buffer_pool_dirty_pct:$innodb_buffer_pool_dirty_pct,
+      bind_address:$bind_address,
+      skip_networking:$skip_networking,
+      port:$port,
+      log_bin:$log_bin,
+      binlog_format:$binlog_format,
+      sync_binlog:$sync_binlog,
+      binlog_cache_size:$binlog_cache_size,
+      binlog_cache_use:$binlog_cache_use,
+      binlog_cache_disk_use:$binlog_cache_disk_use,
+      binlog_cache_pct:$binlog_cache_pct,
+      gtid_mode:$gtid_mode,
+      gtid_current_pos:$gtid_current_pos,
+      have_galera:$have_galera,
+      galera_gcache_bytes:$galera_gcache_bytes,
+      max_connect_errors:$max_connect_errors,
+      thread_handling:$thread_handling,
+      have_threadpool:$have_threadpool,
+      skip_name_resolve:$skip_name_resolve,
+      local_infile:$local_infile,
+      require_secure_transport:$require_secure_transport,
+      have_ssl:$have_ssl,
+      performance_schema:$performance_schema,
+      performance_schema_memory_bytes:$performance_schema_memory_bytes,
+      sys_schema_installed:$sys_schema_installed,
+      sys_schema_version:$sys_schema_version,
+      engines_enabled_csv:$engines_enabled_csv,
+      engine_sizes:$engine_sizes,
+      fragmented_tables_count:$fragmented_tables_count,
+      fragmented_tables:$fragmented_tables,
+      tables_no_pk_count:$tables_no_pk_count,
+      tables_no_pk:$tables_no_pk,
+      large_tables_no_sec_index_count:$large_tables_no_sec_index_count,
+      large_tables_no_sec_index:$large_tables_no_sec_index,
+      fk_mismatches_count:$fk_mismatches_count,
+      fk_mismatches:$fk_mismatches,
+      non_innodb_tables_count:$non_innodb_tables_count,
+      non_innodb_tables:$non_innodb_tables,
+      unconstrained_id_count:$unconstrained_id_count,
+      unconstrained_id:$unconstrained_id,
+      fk_cascade_count:$fk_cascade_count,
+      fk_cascade:$fk_cascade,
+      empty_schemas_count:$empty_schemas_count,
+      empty_schemas:$empty_schemas,
+      nullable_cols_count:$nullable_cols_count,
+      naming_table_issues_count:$naming_table_issues_count,
+      naming_table_issues:$naming_table_issues,
+      naming_col_issues_count:$naming_col_issues_count,
+      naming_col_issues:$naming_col_issues,
+      non_utf8_cols_count:$non_utf8_cols_count,
+      non_utf8_cols:$non_utf8_cols,
+      pk_naming_issues_count:$pk_naming_issues_count,
+      pk_naming_issues:$pk_naming_issues,
+      uuid_pk_issues_count:$uuid_pk_issues_count,
+      uuid_pk_issues:$uuid_pk_issues,
+      pk_surrogate_issues_count:$pk_surrogate_issues_count,
+      pk_surrogate_issues:$pk_surrogate_issues,
+      fulltext_cols_count:$fulltext_cols_count,
+      fulltext_cols:$fulltext_cols,
+      json_no_gen_count:$json_no_gen_count,
+      json_no_gen:$json_no_gen,
+      invisible_idx_count:$invisible_idx_count,
+      invisible_idx:$invisible_idx,
+      check_constraints_count:$check_constraints_count,
+      check_constraints:$check_constraints,
+      plugins_active_count:$plugins_active_count,
+      plugins_active:$plugins_active,
+      databases_count:$databases_count,
+      databases_list:$databases_list,
+      db_tables_count:$db_tables_count,
+      db_views_count:$db_views_count,
+      db_indexes_count:$db_indexes_count,
+      db_total_rows:$db_total_rows,
+      db_data_bytes:$db_data_bytes,
+      db_index_bytes:$db_index_bytes,
+      db_total_bytes:$db_total_bytes,
+      db_charsets_count:$db_charsets_count,
+      db_charsets:$db_charsets,
+      db_collations_count:$db_collations_count,
+      db_collations:$db_collations,
+      db_engines_count:$db_engines_count,
+      db_engines:$db_engines,
+      db_breakdown_count:$db_breakdown_count,
+      db_breakdown:$db_breakdown,
+      db_index_breakdown_count:$db_index_breakdown_count,
+      db_index_breakdown:$db_index_breakdown,
+      largest_tables_count:$largest_tables_count,
+      largest_tables:$largest_tables,
+      views_count:$views_count,
+      views:$views,
+      routines_count:$routines_count,
+      routines:$routines,
+      triggers_count:$triggers_count,
+      triggers:$triggers,
+      indexes_count:$indexes_count,
+      indexes:$indexes,
+      tables_no_index_count:$tables_no_index_count,
+      tables_no_index:$tables_no_index,
+      duplicate_indexes_count:$duplicate_indexes_count,
+      duplicate_indexes:$duplicate_indexes,
+      same_cols_diff_uniq_count:$same_cols_diff_uniq_count,
+      same_cols_diff_uniq:$same_cols_diff_uniq,
+      redundant_indexes_count:$redundant_indexes_count,
+      redundant_indexes:$redundant_indexes,
+      unique_redundant_pk_count:$unique_redundant_pk_count,
+      unique_redundant_pk:$unique_redundant_pk,
+      table_metrics_count:$table_metrics_count,
+      table_metrics:$table_metrics,
+      schema_dir:$schema_dir,
+      max_allowed_packet:$max_allowed_packet,
+      key_buffer_size:$key_buffer_size,
+      key_read_requests:$key_read_requests,
+      key_reads:$key_reads,
+      key_buffer_hit_pct:$key_buffer_hit_pct,
+      query_cache_size:$query_cache_size,
+      query_cache_type:$query_cache_type,
+      query_cache_limit:$query_cache_limit,
+      query_cache_min_res_unit:$query_cache_min_res_unit,
+      qcache_hits:$qcache_hits,
+      qcache_inserts:$qcache_inserts,
+      qcache_lowmem_prunes:$qcache_lowmem_prunes,
+      qcache_not_cached:$qcache_not_cached,
+      qcache_free_memory:$qcache_free_memory,
+      qcache_free_blocks:$qcache_free_blocks,
+      qcache_total_blocks:$qcache_total_blocks,
+      qcache_efficiency_pct:$qcache_efficiency_pct,
+      qcache_hit_pct:$qcache_hit_pct,
+      qcache_free_blocks_pct:$qcache_free_blocks_pct,
+      qcache_used_pct:$qcache_used_pct,
+      qcache_prunes_per_day:$qcache_prunes_per_day,
+      sort_merge_pct:$sort_merge_pct,
+      joins_without_indexes:$joins_without_indexes,
+      joins_without_indexes_per_day:$joins_without_indexes_per_day,
+      tmp_disk_pct:$tmp_disk_pct,
+      select_full_join:$select_full_join,
+      select_full_range_join:$select_full_range_join,
+      select_range_check:$select_range_check,
+      handler_read_rnd_next:$handler_read_rnd_next,
+      handler_read_rnd:$handler_read_rnd,
+      handler_read_first:$handler_read_first,
+      handler_read_key:$handler_read_key,
+      handler_read_next:$handler_read_next,
+      handler_read_prev:$handler_read_prev,
+      handler_read_last:$handler_read_last,
+      mysql_user_readable:$mysql_user_readable,
+      mysql_user_col4:$mysql_user_col4,
+      passwordfile:$passwordfile,
+      max_password_checks:$max_password_checks,
+      ram_total_bytes:$ram_total_bytes,
+      arch_bits:$arch_bits,
+      arch_machine:$arch_machine,
+      global_buffers_bytes:$global_buffers_bytes,
+      max_tmp_table_size:$max_tmp_table_size,
+      innodb_log_buffer_size:$innodb_log_buffer_size,
+      per_thread_buffers_bytes:$per_thread_buffers_bytes,
+      max_memory_estimate_bytes:$max_memory_estimate_bytes,
+      max_memory_at_max_used_bytes:$max_memory_at_max_used_bytes,
+      server_buffers_bytes:$server_buffers_bytes,
+      total_per_thread_buffers_bytes:$total_per_thread_buffers_bytes,
+      max_total_per_thread_buffers_bytes:$max_total_per_thread_buffers_bytes,
+      total_buffers_bytes:$total_buffers_bytes,
+      max_total_buffers_bytes:$max_total_buffers_bytes,
+      pct_max_used_memory:$pct_max_used_memory,
+      pct_max_peak_memory:$pct_max_peak_memory,
+      max_used_memory_bytes:$max_used_memory_bytes,
+      max_peak_memory_bytes:$max_peak_memory_bytes,
+      cve_found:$cve_found,
+      cve_list:$cve_list,
+      weak_password_hits:$weak_password_hits,
+      weak_password_users:$weak_password_users,
+      replication:{
+        role:$repl_role,
+        io_running:$repl_io_running,
+        sql_running:$repl_sql_running,
+        seconds_behind:$repl_seconds_behind,
+        source_host:$repl_source_host,
+        source_port:$repl_source_port,
+        last_io_error:$repl_last_io_error,
+        last_sql_error:$repl_last_sql_error,
+        master_log_file:$master_log_file,
+        master_log_pos:$master_log_pos
+      }
+    }'
+  exit 0
+}
+
+# ---- Output routing --------------------------------------------------------
+if [ "$JSON" -eq 1 ]; then
+  # Run human phase to populate REC_WARN/REC_OK, but suppress ALL output
+  mysqltuner_human >/dev/null
+  mysqltuner_emit_json
+fi
+
+mysqltuner_human
 exit 0
