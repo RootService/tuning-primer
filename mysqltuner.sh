@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.42.1-devel"
+VERSION="3.43.0-devel"
 
 usage() {
   cat <<USAGE
@@ -685,6 +685,21 @@ INDEXES_COUNT=$(printf '%s' "$INDEXES_JSON" | jq -r 'length')
 TABLES_NO_INDEX_JSON=$(mysql_query_silent "SELECT t.table_schema, t.table_name FROM information_schema.tables t WHERE t.table_type='BASE TABLE' AND t.table_schema NOT IN ('mysql','performance_schema','information_schema','sys') AND NOT EXISTS (SELECT 1 FROM information_schema.statistics s WHERE s.table_schema=t.table_schema AND s.table_name=t.table_name);" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1]}]')
 TABLES_NO_INDEX_COUNT=$(printf '%s' "$TABLES_NO_INDEX_JSON" | jq -r 'length')
 
+# Index quality checks (best-effort)
+DUPLICATE_INDEXES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, GROUP_CONCAT(index_name ORDER BY index_name) AS indexes, GROUP_CONCAT(column_name ORDER BY seq_in_index) AS cols, index_type, non_unique, COUNT(*) AS idx_count FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys') GROUP BY table_schema, table_name, cols, index_type, non_unique HAVING COUNT(DISTINCT index_name) > 1;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], indexes:(.[2]|split(",")), columns:(.[3]|split(",")), index_type:.[4], non_unique:(.[5]|tonumber), count:(.[6]|tonumber)}]')
+DUPLICATE_INDEXES_COUNT=$(printf '%s' "$DUPLICATE_INDEXES_JSON" | jq -r 'length')
+
+# Redundant/prefix indexes: if index A columns is a strict prefix of index B columns on same table
+REDUNDANT_INDEXES_JSON=$(printf '%s' "$INDEXES_JSON" | jq -c 'group_by(.schema,.table) | map({schema:.[0].schema, table:.[0].table, idx:.}) | map(.idx as $l | [
+  ($l[] as $a | $l[] as $b |
+    select($a.index != $b.index) |
+    select(($a.columns|length) < ($b.columns|length)) |
+    select(($b.columns[0:($a.columns|length)]) == $a.columns) |
+    {schema:$a.schema, table:$a.table, redundant:$a.index, covered_by:$b.index, redundant_cols:$a.columns, covering_cols:$b.columns}
+  )
+] | unique) | add | (if .==null then [] else . end)')
+REDUNDANT_INDEXES_COUNT=$(printf '%s' "$REDUNDANT_INDEXES_JSON" | jq -r 'length')
+
 # Schema documentation / Mermaid ERD (best-effort; write files only)
 if [ -n "$SCHEMA_DIR" ]; then
   mkdir -p "$SCHEMA_DIR" 2>/dev/null || true
@@ -705,15 +720,45 @@ if [ -n "$SCHEMA_DIR" ]; then
     printf '%s' "$INDEXES_JSON" | jq -r '.[] | "- " + .schema + "." + .table + ": " + .index + " (" + (.index_type//"") + ") cols=" + (.columns|join(","))'
   } | write_text_file "$SCHEMA_DIR/schema.md"
 
-  # Mermaid ER diagram (relationships only)
+  # Mermaid ER diagram (with entities + PK cols, plus FK relationships)
+  SCHEMA_TABLES_JSON=$(mysql_query_silent "SELECT table_schema, table_name FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY table_schema, table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1]}]')
+  PK_COLS_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name FROM information_schema.columns WHERE column_key='PRI' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY table_schema, table_name, ordinal_position;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2]}]')
   FK_RELS_JSON=$(mysql_query_silent "SELECT constraint_schema, table_name, referenced_table_name FROM information_schema.key_column_usage WHERE referenced_table_name IS NOT NULL AND constraint_schema NOT IN ('mysql','performance_schema','information_schema','sys') GROUP BY constraint_schema, table_name, referenced_table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], ref_table:.[2]}]')
 
   {
-    printf 'erDiagram\n'
-    # list tables seen in FK rels to help diagram compilers
-    printf '%s' "$FK_RELS_JSON" | jq -r '[.[] | (.schema + "." + .table), (.schema + "." + .ref_table)] | flatten | unique | .[] | "  " + gsub("\\.";"_") + " { }"'
+    printf '%s\n' 'erDiagram'
+
+    # entities: list all base tables, with PK columns when present
+    printf '%s' "$SCHEMA_TABLES_JSON" | jq -c '.[]' | while IFS= read -r tbl; do
+      sch=$(printf '%s' "$tbl" | jq -r '.schema')
+      tb=$(printf '%s' "$tbl" | jq -r '.table')
+      ent=$(printf '%s' "$sch.$tb" | sed 's/\./_/g')
+      printf '  %s {\n' "$ent"
+      # PK columns (if any)
+      printf '%s' "$PK_COLS_JSON" | jq -r --arg s "$sch" --arg t "$tb" '.[] | select(.schema==$s and .table==$t) | "    string " + .column + " PK"'
+      printf '%s\n' '  }'
+    done
+
+    # relationships
     printf '%s' "$FK_RELS_JSON" | jq -r '.[] | "  " + ((.schema+"."+.table)|gsub("\\.";"_")) + " }o--|| " + ((.schema+"."+.ref_table)|gsub("\\.";"_")) + " : FK"'
   } | write_text_file "$SCHEMA_DIR/schema.mmd"
+
+  # Per-database markdown docs (lightweight)
+  printf '%s' "$DB_BREAKDOWN_JSON" | jq -r '.[].schema' | while IFS= read -r db; do
+    [ -z "$db" ] && continue
+    {
+      printf '# Database: %s\n\n' "$db"
+      [ -n "$NOW_STR" ] && printf 'Generated by mysqltuner.sh on %s\n\n' "$NOW_STR" || true
+      printf '## Tables\n\n'
+      # list tables with engine and total size
+      mysql_query_silent "SELECT table_name, engine, IFNULL(data_length+index_length,0) AS total_bytes FROM information_schema.tables WHERE table_schema='$db' AND table_type='BASE TABLE' ORDER BY total_bytes DESC, table_name;" 2>/dev/null | \
+        jq -Rn '[inputs | select(length>0) | split("\t") | {table:.[0], engine:.[1], total_bytes:(.[2]|tonumber)}] | .[] | "- " + .table + " (" + (.engine//"") + ") total=" + (.total_bytes|tostring)'
+      printf '\n## Indexes\n\n'
+      printf '%s' "$INDEXES_JSON" | jq -r --arg db "$db" '.[] | select(.schema==$db) | "- " + .table + ": " + .index + " (" + (.index_type//"") + ") cols=" + (.columns|join(","))'
+      printf '\n## Foreign Keys\n\n'
+      printf '%s' "$FK_RELS_JSON" | jq -r --arg db "$db" '.[] | select(.schema==$db) | "- " + .table + " -> " + .ref_table'
+    } | write_text_file "$SCHEMA_DIR/databases/$db.md"
+  done
 fi
 
 # Optional: write upstream-style CSV dumps
@@ -766,6 +811,12 @@ if [ -n "$DUMP_DIR" ]; then
 
   # tables_no_index.csv
   printf '%s' "$TABLES_NO_INDEX_JSON" | dump_csv_file "$DUMP_DIR/tables_no_index.csv" "Schema,Table" '.[] | [.schema,.table] | @csv'
+
+  # duplicate_indexes.csv
+  printf '%s' "$DUPLICATE_INDEXES_JSON" | dump_csv_file "$DUMP_DIR/duplicate_indexes.csv" "Schema,Table,Indexes,Columns,IndexType,NonUnique" '.[] | [.schema,.table,(.indexes|join("|")),(.columns|join("|")),(.index_type//""),(.non_unique|tostring)] | @csv'
+
+  # redundant_indexes.csv
+  printf '%s' "$REDUNDANT_INDEXES_JSON" | dump_csv_file "$DUMP_DIR/redundant_indexes.csv" "Schema,Table,RedundantIndex,CoveredBy,RedundantCols,CoveringCols" '.[] | [.schema,.table,.redundant,.covered_by,(.redundant_cols|join("|")),(.covering_cols|join("|"))] | @csv'
 fi
 
 PK_NAMING_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(.column != "id" and .column != (.table + "_id")) | {schema, table, column}]')
@@ -1315,6 +1366,10 @@ if [ "$JSON" -eq 1 ]; then
     --argjson indexes "$INDEXES_JSON" \
     --arg tables_no_index_count "$TABLES_NO_INDEX_COUNT" \
     --argjson tables_no_index "$TABLES_NO_INDEX_JSON" \
+    --arg duplicate_indexes_count "$DUPLICATE_INDEXES_COUNT" \
+    --argjson duplicate_indexes "$DUPLICATE_INDEXES_JSON" \
+    --arg redundant_indexes_count "$REDUNDANT_INDEXES_COUNT" \
+    --argjson redundant_indexes "$REDUNDANT_INDEXES_JSON" \
     --arg schema_dir "$SCHEMA_DIR" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
@@ -1572,6 +1627,10 @@ if [ "$JSON" -eq 1 ]; then
       indexes:$indexes,
       tables_no_index_count:$tables_no_index_count,
       tables_no_index:$tables_no_index,
+      duplicate_indexes_count:$duplicate_indexes_count,
+      duplicate_indexes:$duplicate_indexes,
+      redundant_indexes_count:$redundant_indexes_count,
+      redundant_indexes:$redundant_indexes,
       schema_dir:$schema_dir,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
@@ -1825,6 +1884,10 @@ section "Indexes"
 info "Indexes: $INDEXES_COUNT"
 info "Tables with no indexes: $TABLES_NO_INDEX_COUNT"
 [ "$(num "$TABLES_NO_INDEX_COUNT")" -gt 0 ] && printf '%s' "$TABLES_NO_INDEX_JSON" | jq -r '.[:10][] | "[WARN] No index: " + .schema + "." + .table' || true
+info "Duplicate indexes (same cols/type/unique): $DUPLICATE_INDEXES_COUNT"
+[ "$(num "$DUPLICATE_INDEXES_COUNT")" -gt 0 ] && printf '%s' "$DUPLICATE_INDEXES_JSON" | jq -r '.[:10][] | "[WARN] Duplicate indexes on " + .schema + "." + .table + ": " + (.indexes|join(",")) + " cols=" + (.columns|join(","))' || true
+info "Redundant (prefix) indexes: $REDUNDANT_INDEXES_COUNT"
+[ "$(num "$REDUNDANT_INDEXES_COUNT")" -gt 0 ] && printf '%s' "$REDUNDANT_INDEXES_JSON" | jq -r '.[:10][] | "[WARN] Redundant index " + .schema + "." + .table + "." + .redundant + " covered by " + .covered_by' || true
 
 section "Replication"
 info "Galera Synchronous replication: $HAVE_GALERA"
