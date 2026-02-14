@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.8.0-devel"
+VERSION="3.9.0-devel"
 
 usage() {
   cat <<USAGE
@@ -730,6 +730,13 @@ PER_THREAD_BUFFERS=$(awk -v a="$(num "$READ_BUFFER_SIZE")" -v b="$(num "$READ_RN
 MAX_MEM=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mc="$(num "$MAX_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mc)}')
 MAX_MEM_AT_MAX_USED=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mu="$(num "$MAX_USED_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mu)}')
 
+# Upstream-like memory breakdown
+SERVER_BUFFERS=$GLOBAL_BUFFERS
+TOTAL_PER_THREAD_BUFFERS=$(awk -v p="$PER_THREAD_BUFFERS" -v mc="$(num "$MAX_CONNECTIONS")" 'BEGIN{printf "%d", p*mc}')
+MAX_TOTAL_PER_THREAD_BUFFERS=$(awk -v p="$PER_THREAD_BUFFERS" -v mu="$(num "$MAX_USED_CONNECTIONS")" 'BEGIN{printf "%d", p*mu}')
+TOTAL_BUFFERS=$(awk -v s="$SERVER_BUFFERS" -v t="$TOTAL_PER_THREAD_BUFFERS" 'BEGIN{printf "%d", s+t}')
+MAX_TOTAL_BUFFERS=$(awk -v s="$SERVER_BUFFERS" -v t="$MAX_TOTAL_PER_THREAD_BUFFERS" 'BEGIN{printf "%d", s+t}')
+
 # InnoDB buffer pool vs data size (best-effort)
 ibp=$(num "$INNODB_BP_SIZE")
 idb=$(num "$INNODB_DATA_BYTES")
@@ -907,6 +914,11 @@ if [ "$JSON" -eq 1 ]; then
     --arg per_thread_buffers_bytes "$PER_THREAD_BUFFERS" \
     --arg max_memory_estimate_bytes "$MAX_MEM" \
     --arg max_memory_at_max_used_bytes "$MAX_MEM_AT_MAX_USED" \
+    --arg server_buffers_bytes "$SERVER_BUFFERS" \
+    --arg total_per_thread_buffers_bytes "$TOTAL_PER_THREAD_BUFFERS" \
+    --arg max_total_per_thread_buffers_bytes "$MAX_TOTAL_PER_THREAD_BUFFERS" \
+    --arg total_buffers_bytes "$TOTAL_BUFFERS" \
+    --arg max_total_buffers_bytes "$MAX_TOTAL_BUFFERS" \
     --arg cve_found "$CVE_FOUND" \
     --argjson cve_list "$CVE_LIST_JSON" \
     --arg weak_password_hits "$WEAK_PASSWORD_HITS" \
@@ -1063,6 +1075,11 @@ if [ "$JSON" -eq 1 ]; then
       per_thread_buffers_bytes:$per_thread_buffers_bytes,
       max_memory_estimate_bytes:$max_memory_estimate_bytes,
       max_memory_at_max_used_bytes:$max_memory_at_max_used_bytes,
+      server_buffers_bytes:$server_buffers_bytes,
+      total_per_thread_buffers_bytes:$total_per_thread_buffers_bytes,
+      max_total_per_thread_buffers_bytes:$max_total_per_thread_buffers_bytes,
+      total_buffers_bytes:$total_buffers_bytes,
+      max_total_buffers_bytes:$max_total_buffers_bytes,
       cve_found:$cve_found,
       cve_list:$cve_list,
       weak_password_hits:$weak_password_hits,
@@ -1216,6 +1233,11 @@ info "  thread_stack:          $(bytes_h "$THREAD_STACK")"
 info "  binlog_cache_size:     $(bytes_h "$BINLOG_CACHE_SIZE")"
 info "Max memory estimate:     $(bytes_h "$MAX_MEM") (global + per-thread*max_connections)"
 info "Max memory @ max-used:   $(bytes_h "$MAX_MEM_AT_MAX_USED") (global + per-thread*Max_used_connections)"
+info "Server buffers:          $(bytes_h "$SERVER_BUFFERS")"
+info "Total per-thread buffers: $(bytes_h "$TOTAL_PER_THREAD_BUFFERS")"
+info "Max per-thread buffers:   $(bytes_h "$MAX_TOTAL_PER_THREAD_BUFFERS") (at Max_used_connections)"
+info "Total buffers:           $(bytes_h "$TOTAL_BUFFERS")"
+info "Max total buffers:       $(bytes_h "$MAX_TOTAL_BUFFERS") (at Max_used_connections)"
 if [ "$(num "$RAM_TOTAL")" -gt 0 ]; then
   info "System RAM (best-effort): $(bytes_h "$RAM_TOTAL")"
   mempct=$(pct "$MAX_MEM" "$RAM_TOTAL")
