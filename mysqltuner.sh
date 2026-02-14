@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.29.0-devel"
+VERSION="3.30.0-devel"
 
 usage() {
   cat <<USAGE
@@ -545,6 +545,10 @@ UNCONSTRAINED_ID_COUNT=$(printf '%s' "$UNCONSTRAINED_ID_JSON" | jq -r 'length')
 FK_CASCADE_JSON=$(mysql_query_silent "SELECT rc.constraint_schema, rc.table_name, k.column_name, rc.referenced_table_name, k.referenced_column_name, rc.delete_rule FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage k ON rc.constraint_schema = k.constraint_schema AND rc.constraint_name = k.constraint_name WHERE rc.constraint_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND rc.delete_rule='CASCADE';" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], ref_table:.[3], ref_column:.[4], delete_rule:.[5]}]')
 FK_CASCADE_COUNT=$(printf '%s' "$FK_CASCADE_JSON" | jq -r 'length')
 
+# 8) empty or view-only schemas
+EMPTY_SCHEMAS_JSON=$(mysql_query_silent "SELECT TABLE_SCHEMA, SUM(CASE WHEN TABLE_TYPE='BASE TABLE' THEN 1 ELSE 0 END) AS base_tables, SUM(CASE WHEN TABLE_TYPE='VIEW' THEN 1 ELSE 0 END) AS views FROM information_schema.tables WHERE TABLE_SCHEMA NOT IN ('sys','mysql','performance_schema','information_schema') GROUP BY TABLE_SCHEMA HAVING SUM(CASE WHEN TABLE_TYPE='BASE TABLE' THEN 1 ELSE 0 END) = 0;" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], base_tables:(.[1]|tonumber), views:(.[2]|tonumber)}]')
+EMPTY_SCHEMAS_COUNT=$(printf '%s' "$EMPTY_SCHEMAS_JSON" | jq -r 'length')
+
 # MyISAM / key buffer metrics
 KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
 KEY_READS=$(kv_get "$STATUS_TSV" Key_reads)
@@ -1019,6 +1023,8 @@ if [ "$JSON" -eq 1 ]; then
     --argjson unconstrained_id "$UNCONSTRAINED_ID_JSON" \
     --arg fk_cascade_count "$FK_CASCADE_COUNT" \
     --argjson fk_cascade "$FK_CASCADE_JSON" \
+    --arg empty_schemas_count "$EMPTY_SCHEMAS_COUNT" \
+    --argjson empty_schemas "$EMPTY_SCHEMAS_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1217,6 +1223,8 @@ if [ "$JSON" -eq 1 ]; then
       unconstrained_id:$unconstrained_id,
       fk_cascade_count:$fk_cascade_count,
       fk_cascade:$fk_cascade,
+      empty_schemas_count:$empty_schemas_count,
+      empty_schemas:$empty_schemas,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1364,6 +1372,11 @@ fi
 info "FKs with ON DELETE CASCADE: $FK_CASCADE_COUNT"
 if [ "$(num "$FK_CASCADE_COUNT")" -gt 0 ]; then
   printf '%s' "$FK_CASCADE_JSON" | jq -r '.[:10][] | "[INFO] ON DELETE CASCADE: " + .schema + "." + .table + "." + .column + " -> " + .ref_table + "." + .ref_column'
+fi
+
+info "Empty or view-only schemas: $EMPTY_SCHEMAS_COUNT"
+if [ "$(num "$EMPTY_SCHEMAS_COUNT")" -gt 0 ]; then
+  printf '%s' "$EMPTY_SCHEMAS_JSON" | jq -r '.[:10][] | if (.base_tables==0 and .views==0) then "[INFO] Schema " + .schema + " is empty (no tables or views)" else "[INFO] Schema " + .schema + " contains only views (" + (.views|tostring) + " views)" end'
 fi
 
 section "Replication"
