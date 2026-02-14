@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.19.1-devel"
+VERSION="3.20.0-devel"
 
 usage() {
   cat <<USAGE
@@ -1172,6 +1172,8 @@ info "Server version:  $SERVER_VERSION"
 info "Server flavor:   $SERVER_FLAVOR"
 [ -n "$SERVER_COMMENT" ] && info "Version comment: $SERVER_COMMENT"
 info "Uptime (s):      $UPTIME"
+# Upstream-like: summarize uptime/questions/connections + TX/RX
+info "Up for: $(printf "%s" "$UPTIME_S" )s ($QUESTIONS q [${QPS} qps], $CONNECTIONS conn, TX: $(bytes_h "$BYTES_SENT"), RX: $(bytes_h "$BYTES_RECEIVED"))"
 
 section "Replication"
 info "role: $REPL_ROLE"
@@ -1228,6 +1230,8 @@ fi
 section "Throughput"
 info "Questions:   $QUESTIONS (QPS: $QPS)"
 info "Connections: $CONNECTIONS (CPS: $CPS)"
+info "TX total:    $(bytes_h "$BYTES_SENT") (~${BYTES_SENT_PS} B/s)"
+info "RX total:    $(bytes_h "$BYTES_RECEIVED") (~${BYTES_RECEIVED_PS} B/s)"
 
 section "Read / Write"
 info "Com_select:  $COM_SELECT"
@@ -1238,10 +1242,6 @@ info "Com_replace: $COM_REPLACE"
 if [ -n "${PCT_READS:-}" ]; then
   info "Reads/Writes: ${PCT_READS}% / ${PCT_WRITES}%"
 fi
-
-section "Network Throughput"
-info "Bytes_received: $BYTES_RECEIVED (~${BYTES_RECEIVED_PS} B/s)"
-info "Bytes_sent:     $BYTES_SENT (~${BYTES_SENT_PS} B/s)"
 
 section "Connections"
 info "max_connections:      $MAX_CONNECTIONS"
