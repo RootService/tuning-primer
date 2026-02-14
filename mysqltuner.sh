@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="1.7.0-devel"
+VERSION="1.8.0-devel"
 
 usage() {
   cat <<USAGE
@@ -88,6 +88,7 @@ need_cmd tr
 need_cmd head
 need_cmd printf
 need_cmd jq
+need_cmd sed
 
 # ---- MySQL command builder -------------------------------------------------
 MYSQL_CMD="mysql"
@@ -443,6 +444,11 @@ READ_RND_BUFFER_SIZE=$(kv_get "$VARS_TSV" read_rnd_buffer_size)
 SORT_BUFFER_SIZE=$(kv_get "$VARS_TSV" sort_buffer_size)
 JOIN_BUFFER_SIZE=$(kv_get "$VARS_TSV" join_buffer_size)
 THREAD_STACK=$(kv_get "$VARS_TSV" thread_stack)
+
+SORT_MERGE_PASSES=$(kv_get "$STATUS_TSV" Sort_merge_passes)
+SORT_RANGE=$(kv_get "$STATUS_TSV" Sort_range)
+SORT_ROWS=$(kv_get "$STATUS_TSV" Sort_rows)
+SORT_SCAN=$(kv_get "$STATUS_TSV" Sort_scan)
 QCACHE_SIZE=$(kv_get "$VARS_TSV" query_cache_size)
 QCACHE_TYPE=$(kv_get "$VARS_TSV" query_cache_type)
 QCACHE_LIMIT=$(kv_get "$VARS_TSV" query_cache_limit)
@@ -797,6 +803,11 @@ info "innodb_buffer_pool_size: $(bytes_h "$INNODB_BP_SIZE")"
 info "query_cache_size:        $(bytes_h "$QCACHE_SIZE")"
 info "Global buffers:          $(bytes_h "$GLOBAL_BUFFERS")"
 info "Per-thread buffers:      $(bytes_h "$PER_THREAD_BUFFERS")"
+info "  read_buffer_size:      $(bytes_h "$READ_BUFFER_SIZE")"
+info "  read_rnd_buffer_size:  $(bytes_h "$READ_RND_BUFFER_SIZE")"
+info "  sort_buffer_size:      $(bytes_h "$SORT_BUFFER_SIZE")"
+info "  join_buffer_size:      $(bytes_h "$JOIN_BUFFER_SIZE")"
+info "  thread_stack:          $(bytes_h "$THREAD_STACK")"
 info "Max memory estimate:     $(bytes_h "$MAX_MEM") (global + per-thread*max_connections)"
 if [ "$(num "$RAM_TOTAL")" -gt 0 ]; then
   info "System RAM (best-effort): $(bytes_h "$RAM_TOTAL")"
@@ -807,28 +818,35 @@ else
 fi
 
 section "Query Cache"
-info "query_cache_type:       $QCACHE_TYPE"
-info "query_cache_size:       $(bytes_h "$QCACHE_SIZE")"
-info "query_cache_limit:      $(bytes_h "$QCACHE_LIMIT")"
+info "query_cache_type:         $QCACHE_TYPE"
+info "query_cache_size:         $(bytes_h "$QCACHE_SIZE")"
+info "query_cache_limit:        $(bytes_h "$QCACHE_LIMIT")"
 info "query_cache_min_res_unit: $(bytes_h "$QCACHE_MIN_RES_UNIT")"
-info "Qcache_hits:            $QCACHE_HITS"
-info "Qcache_inserts:         $QCACHE_INSERTS"
-info "Qcache_not_cached:      $QCACHE_NOT_CACHED"
-info "Qcache_lowmem_prunes:   $QCACHE_LOWPRUNES"
-info "Qcache_free_memory:     $(bytes_h "$QCACHE_FREE_MEM")"
+info "Qcache_hits:              $QCACHE_HITS"
+info "Qcache_inserts:           $QCACHE_INSERTS"
+info "Qcache_not_cached:        $QCACHE_NOT_CACHED"
+info "Qcache_lowmem_prunes:     $QCACHE_LOWPRUNES"
+info "Qcache_free_memory:       $(bytes_h "$QCACHE_FREE_MEM")"
 
 if [ "$(num "$QCACHE_SIZE")" -gt 0 ]; then
   if [ "$MYSQL_VER_MAJ" -ge 8 ]; then
     warn "query_cache_size > 0 on MySQL 8+ (query cache removed upstream; check compatibility)"
   fi
   if [ -n "${QCACHE_HIT_PCT:-}" ]; then
-    info "Query cache hit rate:   ${QCACHE_HIT_PCT}%"
+    info "Query cache hit rate:     ${QCACHE_HIT_PCT}%"
     [ "$QCACHE_HIT_PCT" -lt 20 ] && warn "Low query cache hit rate (${QCACHE_HIT_PCT}%)" || true
   fi
   [ "$(num "$QCACHE_LOWPRUNES")" -gt 0 ] && warn "Query cache prunes detected ($QCACHE_LOWPRUNES)" || true
 else
   ok "Query cache disabled"
 fi
+
+section "Sorts"
+info "Sort_merge_passes: $SORT_MERGE_PASSES"
+info "Sort_scan:         $SORT_SCAN"
+info "Sort_range:        $SORT_RANGE"
+info "Sort_rows:         $SORT_ROWS"
+[ "$(num "$SORT_MERGE_PASSES")" -gt 0 ] && warn "Sort_merge_passes > 0 (consider increasing sort_buffer_size or optimizing sorts)" || true
 
 section "Slow Query Log"
 [ -n "$SLOW_QUERY_LOG" ] && info "slow_query_log: $SLOW_QUERY_LOG"
@@ -840,6 +858,14 @@ info "Created_tmp_tables:      $CREATED_TMP_TABLES"
 info "Created_tmp_disk_tables: $CREATED_TMP_DISK_TABLES"
 info "tmp_table_size:          $(bytes_h "$TMP_TABLE_SIZE")"
 info "max_heap_table_size:     $(bytes_h "$MAX_HEAP_TABLE_SIZE")"
+
+efftmp=$TMP_TABLE_SIZE
+if [ "$(num "$MAX_HEAP_TABLE_SIZE")" -gt 0 ] && [ "$(num "$TMP_TABLE_SIZE")" -gt 0 ]; then
+  if [ "$(num "$MAX_HEAP_TABLE_SIZE")" -lt "$(num "$TMP_TABLE_SIZE")" ]; then
+    efftmp=$MAX_HEAP_TABLE_SIZE
+  fi
+  info "effective_tmp_table_size: $(bytes_h "$efftmp") (min of tmp_table_size/max_heap_table_size)"
+fi
 
 tmp=$(num "$CREATED_TMP_TABLES")
 tmpdisk=$(num "$CREATED_TMP_DISK_TABLES")
