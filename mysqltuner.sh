@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="2.8.0-devel"
+VERSION="2.8.1-devel"
 
 usage() {
   cat <<USAGE
@@ -94,7 +94,8 @@ need_cmd sed
 MYSQL_CMD="mysql"
 MYSQL_ARGS="--batch --raw --skip-column-names"
 
-[ -n "$DEFAULTS_FILE" ] && MYSQL_ARGS="$MYSQL_ARGS --defaults-file=$DEFAULTS_FILE"
+# NOTE: mysql requires --defaults-file to be the FIRST option.
+[ -n "$DEFAULTS_FILE" ] && MYSQL_ARGS="--defaults-file=$DEFAULTS_FILE $MYSQL_ARGS"
 [ -n "$HOST" ] && MYSQL_ARGS="$MYSQL_ARGS -h $HOST"
 [ -n "$PORT" ] && MYSQL_ARGS="$MYSQL_ARGS -P $PORT"
 [ -n "$SOCKET" ] && MYSQL_ARGS="$MYSQL_ARGS -S $SOCKET"
