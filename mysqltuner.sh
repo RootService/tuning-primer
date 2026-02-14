@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.5.0-devel"
+VERSION="3.6.0-devel"
 
 usage() {
   cat <<USAGE
@@ -485,6 +485,9 @@ TABLE_DEF_CACHE=$(kv_get "$VARS_TSV" table_definition_cache)
 # Table definition cache sizing (best-effort)
 TOTAL_TABLES=$(mysql_query_silent "SELECT COUNT(*) FROM information_schema.tables;" | head -n 1 | tr -d '\r')
 
+# Engine data sizing (best-effort)
+INNODB_DATA_BYTES=$(mysql_query_silent "SELECT IFNULL(SUM(data_length+index_length),0) FROM information_schema.tables WHERE engine='InnoDB' AND table_schema NOT IN ('mysql','information_schema','performance_schema','sys');" | head -n 1 | tr -d '\r')
+
 # MyISAM / key buffer metrics
 KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
 KEY_READS=$(kv_get "$STATUS_TSV" Key_reads)
@@ -720,6 +723,19 @@ GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SI
 PER_THREAD_BUFFERS=$(awk -v a="$(num "$READ_BUFFER_SIZE")" -v b="$(num "$READ_RND_BUFFER_SIZE")" -v c="$(num "$SORT_BUFFER_SIZE")" -v d="$(num "$JOIN_BUFFER_SIZE")" -v e="$(num "$THREAD_STACK")" 'BEGIN{printf "%d", a+b+c+d+e}')
 MAX_MEM=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mc="$(num "$MAX_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mc)}')
 
+# InnoDB buffer pool vs data size (best-effort)
+ibp=$(num "$INNODB_BP_SIZE")
+idb=$(num "$INNODB_DATA_BYTES")
+if [ "$idb" -gt 0 ]; then
+  if [ "$ibp" -gt 0 ]; then
+    INNODB_BP_DATA_PCT=$(awk -v bp="$ibp" -v d="$idb" 'BEGIN{printf "%d", (bp*100)/d}')
+  else
+    INNODB_BP_DATA_PCT=""
+  fi
+else
+  INNODB_BP_DATA_PCT=""
+fi
+
 # Try to read mysql.user (may fail if no privileges)
 USER_ROWS=$(mysql_query_silent "SELECT user,host,plugin,authentication_string FROM mysql.user" 2>/dev/null || true)
 USER_COL4="authentication_string"
@@ -787,6 +803,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg open_files "$OPEN_FILES" \
     --arg table_definition_cache "$TABLE_DEF_CACHE" \
     --arg total_tables "$TOTAL_TABLES" \
+    --arg innodb_data_bytes "$INNODB_DATA_BYTES" \
+    --arg innodb_bp_data_pct "${INNODB_BP_DATA_PCT:-}" \
     --arg table_open_cache_hits "$TABLE_OPEN_CACHE_HITS" \
     --arg table_open_cache_misses "$TABLE_OPEN_CACHE_MISSES" \
     --arg table_cache_hit_pct "${TABLE_CACHE_HIT_PCT:-}" \
@@ -939,6 +957,8 @@ if [ "$JSON" -eq 1 ]; then
       open_files:$open_files,
       table_definition_cache:$table_definition_cache,
       total_tables:$total_tables,
+      innodb_data_bytes:$innodb_data_bytes,
+      innodb_bp_data_pct:$innodb_bp_data_pct,
       table_open_cache_hits:$table_open_cache_hits,
       table_open_cache_misses:$table_open_cache_misses,
       table_cache_hit_pct:$table_cache_hit_pct,
@@ -1296,6 +1316,11 @@ fi
 
 section "InnoDB"
 [ -n "$INNODB_BP_SIZE" ] && info "innodb_buffer_pool_size: $(bytes_h "$INNODB_BP_SIZE")"
+[ -n "$INNODB_DATA_BYTES" ] && info "InnoDB data+index size:  $(bytes_h "$INNODB_DATA_BYTES")"
+if [ -n "${INNODB_BP_DATA_PCT:-}" ]; then
+  info "BP / data size:         ${INNODB_BP_DATA_PCT}%"
+  [ "$(num "$INNODB_BP_DATA_PCT")" -lt 100 ] && warn "InnoDB buffer pool is smaller than InnoDB data+index size" || true
+fi
 [ -n "$INNODB_BP_INSTANCES" ] && info "innodb_buffer_pool_instances: $INNODB_BP_INSTANCES"
 [ -n "$INNODB_FILE_PER_TABLE" ] && info "innodb_file_per_table: $INNODB_FILE_PER_TABLE"
 [ -n "$INNODB_FLUSH_METHOD" ] && info "innodb_flush_method: $INNODB_FLUSH_METHOD"
