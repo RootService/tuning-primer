@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.6.2-devel"
+VERSION="3.7.0-devel"
 
 usage() {
   cat <<USAGE
@@ -718,8 +718,9 @@ fi
 # Memory estimate (best-effort)
 RAM_TOTAL=$(mem_total_bytes)
 GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SIZE")" -v c="$(num "$QCACHE_SIZE")" 'BEGIN{printf "%d", a+b+c}')
-PER_THREAD_BUFFERS=$(awk -v a="$(num "$READ_BUFFER_SIZE")" -v b="$(num "$READ_RND_BUFFER_SIZE")" -v c="$(num "$SORT_BUFFER_SIZE")" -v d="$(num "$JOIN_BUFFER_SIZE")" -v e="$(num "$THREAD_STACK")" 'BEGIN{printf "%d", a+b+c+d+e}')
+PER_THREAD_BUFFERS=$(awk -v a="$(num "$READ_BUFFER_SIZE")" -v b="$(num "$READ_RND_BUFFER_SIZE")" -v c="$(num "$SORT_BUFFER_SIZE")" -v d="$(num "$JOIN_BUFFER_SIZE")" -v e="$(num "$THREAD_STACK")" -v f="$(num "$BINLOG_CACHE_SIZE")" 'BEGIN{printf "%d", a+b+c+d+e+f}')
 MAX_MEM=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mc="$(num "$MAX_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mc)}')
+MAX_MEM_AT_MAX_USED=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mu="$(num "$MAX_USED_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mu)}')
 
 # InnoDB buffer pool vs data size (best-effort)
 ibp=$(num "$INNODB_BP_SIZE")
@@ -896,6 +897,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg global_buffers_bytes "$GLOBAL_BUFFERS" \
     --arg per_thread_buffers_bytes "$PER_THREAD_BUFFERS" \
     --arg max_memory_estimate_bytes "$MAX_MEM" \
+    --arg max_memory_at_max_used_bytes "$MAX_MEM_AT_MAX_USED" \
     --arg cve_found "$CVE_FOUND" \
     --argjson cve_list "$CVE_LIST_JSON" \
     --arg weak_password_hits "$WEAK_PASSWORD_HITS" \
@@ -1050,6 +1052,7 @@ if [ "$JSON" -eq 1 ]; then
       global_buffers_bytes:$global_buffers_bytes,
       per_thread_buffers_bytes:$per_thread_buffers_bytes,
       max_memory_estimate_bytes:$max_memory_estimate_bytes,
+      max_memory_at_max_used_bytes:$max_memory_at_max_used_bytes,
       cve_found:$cve_found,
       cve_list:$cve_list,
       weak_password_hits:$weak_password_hits,
@@ -1199,7 +1202,9 @@ info "  read_rnd_buffer_size:  $(bytes_h "$READ_RND_BUFFER_SIZE")"
 info "  sort_buffer_size:      $(bytes_h "$SORT_BUFFER_SIZE")"
 info "  join_buffer_size:      $(bytes_h "$JOIN_BUFFER_SIZE")"
 info "  thread_stack:          $(bytes_h "$THREAD_STACK")"
+info "  binlog_cache_size:     $(bytes_h "$BINLOG_CACHE_SIZE")"
 info "Max memory estimate:     $(bytes_h "$MAX_MEM") (global + per-thread*max_connections)"
+info "Max memory @ max-used:   $(bytes_h "$MAX_MEM_AT_MAX_USED") (global + per-thread*Max_used_connections)"
 if [ "$(num "$RAM_TOTAL")" -gt 0 ]; then
   info "System RAM (best-effort): $(bytes_h "$RAM_TOTAL")"
   mempct=$(pct "$MAX_MEM" "$RAM_TOTAL")
