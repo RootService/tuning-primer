@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.36.0-devel"
+VERSION="3.36.1-devel"
 
 usage() {
   cat <<USAGE
@@ -598,6 +598,10 @@ if [ -n "$DUMP_DIR" ]; then
 
   # columns_non_utf8.csv
   printf '%s' "$NON_UTF8_COLS_JSON" | dump_csv_file "$DUMP_DIR/columns_non_utf8.csv" "Schema,Table,Column,Charset,Collation,Data Type,Max Length" '.[] | [.schema,.table,.column,(.charset//""),(.collation//""),.data_type,(.max_len//"")] | @csv'
+
+  # columns_utf8.csv (informational)
+  UTF8_COLS_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name, character_set_name, collation_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND (character_set_name IS NOT NULL OR collation_name IS NOT NULL) AND (character_set_name LIKE 'utf8%' OR collation_name LIKE 'utf8%');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], charset:.[3], collation:.[4], data_type:.[5], max_len:.[6]}]')
+  printf '%s' "$UTF8_COLS_JSON" | dump_csv_file "$DUMP_DIR/columns_utf8.csv" "Schema,Table,Column,Charset,Collation,Data Type,Max Length" '.[] | [.schema,.table,.column,(.charset//""),(.collation//""),.data_type,(.max_len//"")] | @csv'
 
   # fulltext_columns.csv
   printf '%s' "$FULLTEXT_COLS_JSON" | dump_csv_file "$DUMP_DIR/fulltext_columns.csv" "Schema,Table,Column,Data Type" '.[] | [.schema,.table,.column,.data_type] | @csv'
