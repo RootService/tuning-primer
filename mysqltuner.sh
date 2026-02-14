@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.23.1-devel"
+VERSION="3.24.0-devel"
 
 usage() {
   cat <<USAGE
@@ -843,6 +843,14 @@ check_weak_passwords_pre8
 # Performance schema memory
 PFS_MEMORY_BYTES=$(pfs_memory_bytes)
 
+# Sys schema presence (best-effort)
+SYS_SCHEMA_INSTALLED=no
+SYS_SCHEMA_VERSION=""
+if mysql_query_silent "SHOW DATABASES;" | awk '($1=="sys"){found=1} END{exit(found?0:1)}'; then
+  SYS_SCHEMA_INSTALLED=yes
+  SYS_SCHEMA_VERSION=$(mysql_query_silent "SELECT sys_version FROM sys.version;" | head -n 1 | tr -d '\r')
+fi
+
 # Best-effort replication scan
 check_replication
 
@@ -955,6 +963,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg have_ssl "$HAVE_SSL" \
     --arg performance_schema "$PERFORMANCE_SCHEMA" \
     --arg performance_schema_memory_bytes "$PFS_MEMORY_BYTES" \
+    --arg sys_schema_installed "$SYS_SCHEMA_INSTALLED" \
+    --arg sys_schema_version "$SYS_SCHEMA_VERSION" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1133,6 +1143,8 @@ if [ "$JSON" -eq 1 ]; then
       have_ssl:$have_ssl,
       performance_schema:$performance_schema,
       performance_schema_memory_bytes:$performance_schema_memory_bytes,
+      sys_schema_installed:$sys_schema_installed,
+      sys_schema_version:$sys_schema_version,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1700,6 +1712,13 @@ fi
 section "Performance Schema"
 [ -n "$PERFORMANCE_SCHEMA" ] && info "performance_schema: $PERFORMANCE_SCHEMA"
 [ "$(num "$PFS_MEMORY_BYTES")" -gt 0 ] && info "Performance_schema Max memory usage: $(bytes_h "$PFS_MEMORY_BYTES")" || true
+
+if [ "$SYS_SCHEMA_INSTALLED" = "yes" ]; then
+  info "Sys schema is installed."
+  [ -n "$SYS_SCHEMA_VERSION" ] && info "Sys schema Version: $SYS_SCHEMA_VERSION" || true
+else
+  info "Sys schema is not installed."
+fi
 
 section "Security (basic)"
 [ -n "$SKIP_NAME_RESOLVE" ] && info "skip_name_resolve: $SKIP_NAME_RESOLVE"
