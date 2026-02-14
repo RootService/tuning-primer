@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.6.1-devel"
+VERSION="3.6.2-devel"
 
 usage() {
   cat <<USAGE
@@ -1341,9 +1341,13 @@ fi
 
 [ -n "$INNODB_LOG_WRITE_REQ" ] && info "Innodb_log_write_requests: $INNODB_LOG_WRITE_REQ"
 [ -n "$INNODB_LOG_WRITES" ] && info "Innodb_log_writes:         $INNODB_LOG_WRITES"
-if [ -n "${INNODB_LOG_WRITE_EFF_PCT:-}" ]; then
-  info "InnoDB log write efficiency: ${INNODB_LOG_WRITE_EFF_PCT}%"
-  [ "$(num "$INNODB_LOG_WRITE_EFF_PCT")" -lt 90 ] && warn "Low InnoDB log write efficiency (${INNODB_LOG_WRITE_EFF_PCT}%)" || true
+if [ "$lw" -gt "$lwr" ]; then
+  info "InnoDB Write Log efficiency: metrics not reliable (writes > write requests)"
+else
+  if [ -n "${INNODB_LOG_WRITE_EFF_PCT:-}" ]; then
+    info "InnoDB log write efficiency: ${INNODB_LOG_WRITE_EFF_PCT}%"
+    [ "$(num "$INNODB_LOG_WRITE_EFF_PCT")" -lt 90 ] && warn "Low InnoDB log write efficiency (${INNODB_LOG_WRITE_EFF_PCT}%)" || true
+  fi
 fi
 [ -n "$INNODB_LOG_WAITS" ] && info "Innodb_log_waits:          $INNODB_LOG_WAITS"
 [ "$(num "$INNODB_LOG_WAITS")" -gt 0 ] && warn "InnoDB log waits detected ($INNODB_LOG_WAITS) - consider larger innodb_log_buffer_size or faster disk" || true
@@ -1370,11 +1374,15 @@ fi
 
 bprr=$(num "$INNODB_BP_READ_REQ")
 bpr=$(num "$INNODB_BP_READS")
-if [ "$bprr" -gt 0 ]; then
-  hit=$((bprr - bpr)); [ "$hit" -lt 0 ] && hit=0
-  hp=$(pct "$hit" "$bprr")
-  info "InnoDB BP hit rate: ${hp}%"
-  [ "$hp" -lt 95 ] && warn "Low InnoDB buffer pool hit rate (${hp}%)" || ok "InnoDB buffer pool hit rate (${hp}%)"
+if [ "$bpr" -gt "$bprr" ]; then
+  info "InnoDB Read buffer efficiency: metrics not reliable (reads > read requests)"
+else
+  if [ "$bprr" -gt 0 ]; then
+    hit=$((bprr - bpr)); [ "$hit" -lt 0 ] && hit=0
+    hp=$(pct "$hit" "$bprr")
+    info "InnoDB BP hit rate: ${hp}%"
+    [ "$hp" -lt 95 ] && warn "Low InnoDB buffer pool hit rate (${hp}%)" || ok "InnoDB buffer pool hit rate (${hp}%)"
+  fi
 fi
 
 section "MyISAM / Key Buffer"
