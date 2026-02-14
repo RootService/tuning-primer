@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.38.0-devel"
+VERSION="3.38.1-devel"
 
 usage() {
   cat <<USAGE
@@ -586,34 +586,6 @@ PK_INFO_JSON=$(mysql_query_silent "SELECT c.table_schema, c.table_name, c.column
 FULLTEXT_COLS_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name, data_type FROM information_schema.columns WHERE table_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND data_type='fulltext';" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], data_type:.[3]}]')
 FULLTEXT_COLS_COUNT=$(printf '%s' "$FULLTEXT_COLS_JSON" | jq -r 'length')
 
-# Optional: write upstream-style CSV dumps
-if [ -n "$DUMP_DIR" ]; then
-  mkdir -p "$DUMP_DIR" 2>/dev/null || true
-
-  # tables_without_primary_keys.csv (ours: tables without PRI/UNI)
-  printf '%s' "$TABLES_NO_PK_JSON" | dump_csv_file "$DUMP_DIR/tables_without_primary_keys.csv" "Schema,Table" '.[] | [.schema,.table] | @csv'
-
-  # tables_non_innodb.csv
-  printf '%s' "$NON_INNODB_TABLES_JSON" | dump_csv_file "$DUMP_DIR/tables_non_innodb.csv" "Schema,Table,Engine" '.[] | [.schema,.table,.engine] | @csv'
-
-  # columns_non_utf8.csv
-  printf '%s' "$NON_UTF8_COLS_JSON" | dump_csv_file "$DUMP_DIR/columns_non_utf8.csv" "Schema,Table,Column,Charset,Collation,Data Type,Max Length" '.[] | [.schema,.table,.column,(.charset//""),(.collation//""),.data_type,(.max_len//"")] | @csv'
-
-  # columns_utf8.csv (informational)
-  UTF8_COLS_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name, character_set_name, collation_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND (character_set_name IS NOT NULL OR collation_name IS NOT NULL) AND (character_set_name LIKE 'utf8%' OR collation_name LIKE 'utf8%');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], charset:.[3], collation:.[4], data_type:.[5], max_len:.[6]}]')
-  printf '%s' "$UTF8_COLS_JSON" | dump_csv_file "$DUMP_DIR/columns_utf8.csv" "Schema,Table,Column,Charset,Collation,Data Type,Max Length" '.[] | [.schema,.table,.column,(.charset//""),(.collation//""),.data_type,(.max_len//"")] | @csv'
-
-  # fulltext_columns.csv
-  printf '%s' "$FULLTEXT_COLS_JSON" | dump_csv_file "$DUMP_DIR/fulltext_columns.csv" "Schema,Table,Column,Data Type" '.[] | [.schema,.table,.column,.data_type] | @csv'
-
-  # plugins_active.csv
-  printf '%s' "$PLUGINS_ACTIVE_JSON" | dump_csv_file "$DUMP_DIR/plugins_active.csv" "Plugin,Version,Status,Type" '.[] | [.name,(.version//""),(.status//""),(.type//"")] | @csv'
-
-  # databases_summary.csv
-  DB_SUMMARY_JSON=$(jq -n --arg databases_count "$DATABASES_COUNT" --arg tables "$DB_TABLES_COUNT" --arg views "$DB_VIEWS_COUNT" --arg indexes "$DB_INDEXES_COUNT" --arg rows "$DB_TOTAL_ROWS" --arg data_bytes "$DB_DATA_BYTES" --arg index_bytes "$DB_INDEX_BYTES" --arg total_bytes "$DB_TOTAL_BYTES" '{databases_count:$databases_count,tables:$tables,views:$views,indexes:$indexes,rows:$rows,data_bytes:$data_bytes,index_bytes:$index_bytes,total_bytes:$total_bytes}')
-  printf '%s' "$DB_SUMMARY_JSON" | dump_csv_file "$DUMP_DIR/databases_summary.csv" "Databases,Tables,Views,Indexes,Rows,DataBytes,IndexBytes,TotalBytes" '. | [.databases_count,.tables,.views,.indexes,.rows,.data_bytes,.index_bytes,.total_bytes] | @csv'
-fi
-
 # 14) MySQL 8.0+ specific modeling checks (best-effort)
 # 14a) JSON columns without generated columns (virtual/stored) for indexing
 JSON_NO_GEN_JSON=$(mysql_query_silent "SELECT c.table_schema, c.table_name, c.column_name FROM information_schema.columns c WHERE c.data_type='json' AND c.table_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND NOT EXISTS (SELECT 1 FROM information_schema.columns g WHERE g.table_schema=c.table_schema AND g.table_name=c.table_name AND (g.extra LIKE '%VIRTUAL%' OR g.extra LIKE '%STORED%'));" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2]}]')
@@ -673,6 +645,34 @@ DB_COLLATIONS_COUNT=$(printf '%s' "$DB_COLLATIONS_JSON" | jq -r 'length')
 
 DB_ENGINES_JSON=$(mysql_query_silent "SELECT DISTINCT engine FROM information_schema.tables WHERE engine IS NOT NULL AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY engine;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | .]')
 DB_ENGINES_COUNT=$(printf '%s' "$DB_ENGINES_JSON" | jq -r 'length')
+
+# Optional: write upstream-style CSV dumps
+if [ -n "$DUMP_DIR" ]; then
+  mkdir -p "$DUMP_DIR" 2>/dev/null || true
+
+  # tables_without_primary_keys.csv (ours: tables without PRI/UNI)
+  printf '%s' "$TABLES_NO_PK_JSON" | dump_csv_file "$DUMP_DIR/tables_without_primary_keys.csv" "Schema,Table" '.[] | [.schema,.table] | @csv'
+
+  # tables_non_innodb.csv
+  printf '%s' "$NON_INNODB_TABLES_JSON" | dump_csv_file "$DUMP_DIR/tables_non_innodb.csv" "Schema,Table,Engine" '.[] | [.schema,.table,.engine] | @csv'
+
+  # columns_non_utf8.csv
+  printf '%s' "$NON_UTF8_COLS_JSON" | dump_csv_file "$DUMP_DIR/columns_non_utf8.csv" "Schema,Table,Column,Charset,Collation,Data Type,Max Length" '.[] | [.schema,.table,.column,(.charset//""),(.collation//""),.data_type,(.max_len//"")] | @csv'
+
+  # columns_utf8.csv (informational)
+  UTF8_COLS_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name, character_set_name, collation_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND (character_set_name IS NOT NULL OR collation_name IS NOT NULL) AND (character_set_name LIKE 'utf8%' OR collation_name LIKE 'utf8%');" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], charset:.[3], collation:.[4], data_type:.[5], max_len:.[6]}]')
+  printf '%s' "$UTF8_COLS_JSON" | dump_csv_file "$DUMP_DIR/columns_utf8.csv" "Schema,Table,Column,Charset,Collation,Data Type,Max Length" '.[] | [.schema,.table,.column,(.charset//""),(.collation//""),.data_type,(.max_len//"")] | @csv'
+
+  # fulltext_columns.csv
+  printf '%s' "$FULLTEXT_COLS_JSON" | dump_csv_file "$DUMP_DIR/fulltext_columns.csv" "Schema,Table,Column,Data Type" '.[] | [.schema,.table,.column,.data_type] | @csv'
+
+  # plugins_active.csv
+  printf '%s' "$PLUGINS_ACTIVE_JSON" | dump_csv_file "$DUMP_DIR/plugins_active.csv" "Plugin,Version,Status,Type" '.[] | [.name,(.version//""),(.status//""),(.type//"")] | @csv'
+
+  # databases_summary.csv
+  DB_SUMMARY_JSON=$(jq -n --arg databases_count "$DATABASES_COUNT" --arg tables "$DB_TABLES_COUNT" --arg views "$DB_VIEWS_COUNT" --arg indexes "$DB_INDEXES_COUNT" --arg rows "$DB_TOTAL_ROWS" --arg data_bytes "$DB_DATA_BYTES" --arg index_bytes "$DB_INDEX_BYTES" --arg total_bytes "$DB_TOTAL_BYTES" '{databases_count:$databases_count,tables:$tables,views:$views,indexes:$indexes,rows:$rows,data_bytes:$data_bytes,index_bytes:$index_bytes,total_bytes:$total_bytes}')
+  printf '%s' "$DB_SUMMARY_JSON" | dump_csv_file "$DUMP_DIR/databases_summary.csv" "Databases,Tables,Views,Indexes,Rows,DataBytes,IndexBytes,TotalBytes" '. | [.databases_count,.tables,.views,.indexes,.rows,.data_bytes,.index_bytes,.total_bytes] | @csv'
+fi
 
 PK_NAMING_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(.column != "id" and .column != (.table + "_id")) | {schema, table, column}]')
 PK_NAMING_ISSUES_COUNT=$(printf '%s' "$PK_NAMING_ISSUES_JSON" | jq -r 'length')
