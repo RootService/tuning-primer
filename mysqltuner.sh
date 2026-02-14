@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.26.0-devel"
+VERSION="3.26.1-devel"
 
 usage() {
   cat <<USAGE
@@ -514,7 +514,7 @@ INNODB_DATA_BYTES=$(mysql_query_silent "SELECT IFNULL(SUM(data_length+index_leng
 
 # Storage engine statistics (best-effort)
 ENGINES_ENABLED_CSV=$(mysql_query_silent "SELECT ENGINE,SUPPORT FROM information_schema.ENGINES ORDER BY ENGINE;" | awk -F"\t" '($2=="YES"||$2=="DEFAULT"){print $1}' | tr '\n' ',' | sed 's/,$//')
-ENGINE_SIZES_JSON=$(mysql_query_silent "SELECT ENGINE, IFNULL(SUM(DATA_LENGTH+INDEX_LENGTH),0) AS total_bytes, COUNT(*) AS table_count, IFNULL(SUM(DATA_LENGTH),0) AS data_bytes, IFNULL(SUM(INDEX_LENGTH),0) AS index_bytes FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys') AND ENGINE IS NOT NULL GROUP BY ENGINE ORDER BY ENGINE;" | jq -Rn '[inputs | split("\t") | {engine:.[0], total_bytes:(.[1]|tonumber), table_count:(.[2]|tonumber), data_bytes:(.[3]|tonumber), index_bytes:(.[4]|tonumber)}]')
+ENGINE_SIZES_JSON=$(mysql_query_silent "SELECT ENGINE, IFNULL(SUM(DATA_LENGTH+INDEX_LENGTH),0) AS total_bytes, COUNT(*) AS table_count, IFNULL(SUM(DATA_LENGTH),0) AS data_bytes, IFNULL(SUM(INDEX_LENGTH),0) AS index_bytes FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys') AND ENGINE IS NOT NULL GROUP BY ENGINE ORDER BY ENGINE;" | jq -Rn '[inputs | select(length>0) | split("\t") | {engine:.[0], total_bytes:(.[1]|tonumber), table_count:(.[2]|tonumber), data_bytes:(.[3]|tonumber), index_bytes:(.[4]|tonumber)}]')
 
 # MyISAM / key buffer metrics
 KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
@@ -1264,7 +1264,12 @@ section "Storage Engine Statistics"
 [ -n "$ENGINES_ENABLED_CSV" ] && info "Enabled engines: $ENGINES_ENABLED_CSV" || true
 # Print top engines by size (best-effort)
 if printf '%s' "$ENGINE_SIZES_JSON" | jq -e . >/dev/null 2>&1; then
-  printf '%s' "$ENGINE_SIZES_JSON" | jq -r '.[] | "[INFO] " + .engine + ": " + (.total_bytes|tostring) + " bytes (tables=" + (.table_count|tostring) + ")"' | head -n 12
+  n=$(printf '%s' "$ENGINE_SIZES_JSON" | jq -r 'length')
+  if [ "$(num "$n")" -eq 0 ]; then
+    info "No user tables found (information_schema.TABLES is empty for non-system schemas)"
+  else
+    printf '%s' "$ENGINE_SIZES_JSON" | jq -r '.[] | "[INFO] " + .engine + ": " + (.total_bytes|tostring) + " bytes (tables=" + (.table_count|tostring) + ")"' | head -n 12
+  fi
 fi
 
 section "Replication"
