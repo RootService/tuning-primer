@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.37.0-devel"
+VERSION="3.38.0-devel"
 
 usage() {
   cat <<USAGE
@@ -605,6 +605,13 @@ if [ -n "$DUMP_DIR" ]; then
 
   # fulltext_columns.csv
   printf '%s' "$FULLTEXT_COLS_JSON" | dump_csv_file "$DUMP_DIR/fulltext_columns.csv" "Schema,Table,Column,Data Type" '.[] | [.schema,.table,.column,.data_type] | @csv'
+
+  # plugins_active.csv
+  printf '%s' "$PLUGINS_ACTIVE_JSON" | dump_csv_file "$DUMP_DIR/plugins_active.csv" "Plugin,Version,Status,Type" '.[] | [.name,(.version//""),(.status//""),(.type//"")] | @csv'
+
+  # databases_summary.csv
+  DB_SUMMARY_JSON=$(jq -n --arg databases_count "$DATABASES_COUNT" --arg tables "$DB_TABLES_COUNT" --arg views "$DB_VIEWS_COUNT" --arg indexes "$DB_INDEXES_COUNT" --arg rows "$DB_TOTAL_ROWS" --arg data_bytes "$DB_DATA_BYTES" --arg index_bytes "$DB_INDEX_BYTES" --arg total_bytes "$DB_TOTAL_BYTES" '{databases_count:$databases_count,tables:$tables,views:$views,indexes:$indexes,rows:$rows,data_bytes:$data_bytes,index_bytes:$index_bytes,total_bytes:$total_bytes}')
+  printf '%s' "$DB_SUMMARY_JSON" | dump_csv_file "$DUMP_DIR/databases_summary.csv" "Databases,Tables,Views,Indexes,Rows,DataBytes,IndexBytes,TotalBytes" '. | [.databases_count,.tables,.views,.indexes,.rows,.data_bytes,.index_bytes,.total_bytes] | @csv'
 fi
 
 # 14) MySQL 8.0+ specific modeling checks (best-effort)
@@ -639,6 +646,33 @@ if [ "$(num "$MYSQL_VER_MAJ")" -ge 8 ] && [ "$(num "$MYSQL_VER_MIN")" -ge 0 ]; t
     esac
   fi
 fi
+
+# 15) Plugin Information (active plugins, best-effort)
+PLUGINS_ACTIVE_JSON=$(mysql_query_silent "SELECT plugin_name, plugin_version, plugin_status, plugin_type FROM information_schema.plugins WHERE plugin_status='ACTIVE' AND plugin_type != 'INFORMATION SCHEMA' ORDER BY plugin_type, plugin_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {name:.[0], version:.[1], status:.[2], type:.[3]}]')
+PLUGINS_ACTIVE_COUNT=$(printf '%s' "$PLUGINS_ACTIVE_JSON" | jq -r 'length')
+
+# 16) Database Metrics (summary, best-effort)
+DATABASES_LIST_JSON=$(mysql_query_silent "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('mysql','performance_schema','information_schema','sys');" 2>/dev/null | jq -Rn '[inputs | select(length>0) | {schema:.}]')
+DATABASES_COUNT=$(printf '%s' "$DATABASES_LIST_JSON" | jq -r 'length')
+
+DB_TABLES_COUNT=$(mysql_query_silent "SELECT COUNT(*) FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys');" 2>/dev/null | head -n 1 | tr -d '\r')
+DB_VIEWS_COUNT=$(mysql_query_silent "SELECT COUNT(*) FROM information_schema.tables WHERE table_type='VIEW' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys');" 2>/dev/null | head -n 1 | tr -d '\r')
+DB_INDEXES_COUNT=$(mysql_query_silent "SELECT COUNT(DISTINCT CONCAT(table_name, table_schema, index_name)) FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys');" 2>/dev/null | head -n 1 | tr -d '\r')
+
+DB_SUMMARY_TSV=$(mysql_query_silent "SELECT IFNULL(SUM(table_rows),0), IFNULL(SUM(data_length),0), IFNULL(SUM(index_length),0), IFNULL(SUM(data_length+index_length),0), COUNT(table_name), COUNT(DISTINCT table_collation), COUNT(DISTINCT engine) FROM information_schema.tables WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys');" 2>/dev/null | head -n 1 | tr -d '\r')
+DB_TOTAL_ROWS=$(printf '%s' "$DB_SUMMARY_TSV" | awk -F"\t" '{print $1}')
+DB_DATA_BYTES=$(printf '%s' "$DB_SUMMARY_TSV" | awk -F"\t" '{print $2}')
+DB_INDEX_BYTES=$(printf '%s' "$DB_SUMMARY_TSV" | awk -F"\t" '{print $3}')
+DB_TOTAL_BYTES=$(printf '%s' "$DB_SUMMARY_TSV" | awk -F"\t" '{print $4}')
+
+DB_CHARSETS_JSON=$(mysql_query_silent "SELECT DISTINCT character_set_name FROM information_schema.columns WHERE character_set_name IS NOT NULL AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY character_set_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | .]')
+DB_CHARSETS_COUNT=$(printf '%s' "$DB_CHARSETS_JSON" | jq -r 'length')
+
+DB_COLLATIONS_JSON=$(mysql_query_silent "SELECT DISTINCT table_collation FROM information_schema.tables WHERE table_collation IS NOT NULL AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY table_collation;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | .]')
+DB_COLLATIONS_COUNT=$(printf '%s' "$DB_COLLATIONS_JSON" | jq -r 'length')
+
+DB_ENGINES_JSON=$(mysql_query_silent "SELECT DISTINCT engine FROM information_schema.tables WHERE engine IS NOT NULL AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY engine;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | .]')
+DB_ENGINES_COUNT=$(printf '%s' "$DB_ENGINES_JSON" | jq -r 'length')
 
 PK_NAMING_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(.column != "id" and .column != (.table + "_id")) | {schema, table, column}]')
 PK_NAMING_ISSUES_COUNT=$(printf '%s' "$PK_NAMING_ISSUES_JSON" | jq -r 'length')
@@ -1154,6 +1188,23 @@ if [ "$JSON" -eq 1 ]; then
     --argjson invisible_idx "$INVISIBLE_IDX_JSON" \
     --arg check_constraints_count "$CHECK_CONSTRAINTS_COUNT" \
     --argjson check_constraints "$CHECK_CONSTRAINTS_JSON" \
+    --arg plugins_active_count "$PLUGINS_ACTIVE_COUNT" \
+    --argjson plugins_active "$PLUGINS_ACTIVE_JSON" \
+    --arg databases_count "$DATABASES_COUNT" \
+    --argjson databases_list "$DATABASES_LIST_JSON" \
+    --arg db_tables_count "$DB_TABLES_COUNT" \
+    --arg db_views_count "$DB_VIEWS_COUNT" \
+    --arg db_indexes_count "$DB_INDEXES_COUNT" \
+    --arg db_total_rows "$DB_TOTAL_ROWS" \
+    --arg db_data_bytes "$DB_DATA_BYTES" \
+    --arg db_index_bytes "$DB_INDEX_BYTES" \
+    --arg db_total_bytes "$DB_TOTAL_BYTES" \
+    --arg db_charsets_count "$DB_CHARSETS_COUNT" \
+    --argjson db_charsets "$DB_CHARSETS_JSON" \
+    --arg db_collations_count "$DB_COLLATIONS_COUNT" \
+    --argjson db_collations "$DB_COLLATIONS_JSON" \
+    --arg db_engines_count "$DB_ENGINES_COUNT" \
+    --argjson db_engines "$DB_ENGINES_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1377,6 +1428,23 @@ if [ "$JSON" -eq 1 ]; then
       invisible_idx:$invisible_idx,
       check_constraints_count:$check_constraints_count,
       check_constraints:$check_constraints,
+      plugins_active_count:$plugins_active_count,
+      plugins_active:$plugins_active,
+      databases_count:$databases_count,
+      databases_list:$databases_list,
+      db_tables_count:$db_tables_count,
+      db_views_count:$db_views_count,
+      db_indexes_count:$db_indexes_count,
+      db_total_rows:$db_total_rows,
+      db_data_bytes:$db_data_bytes,
+      db_index_bytes:$db_index_bytes,
+      db_total_bytes:$db_total_bytes,
+      db_charsets_count:$db_charsets_count,
+      db_charsets:$db_charsets,
+      db_collations_count:$db_collations_count,
+      db_collations:$db_collations,
+      db_engines_count:$db_engines_count,
+      db_engines:$db_engines,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1590,6 +1658,18 @@ if [ "$(num "$CHECK_CONSTRAINTS_COUNT")" -gt 0 ]; then
 else
   info "CHECK constraints: 0"
 fi
+
+section "Plugins"
+info "Active plugins (excluding INFORMATION_SCHEMA): $PLUGINS_ACTIVE_COUNT"
+if [ "$(num "$PLUGINS_ACTIVE_COUNT")" -gt 0 ]; then
+  printf '%s' "$PLUGINS_ACTIVE_JSON" | jq -r '.[:20][] | "[INFO] Plugin: " + .name + " v" + (.version//"") + " type=" + (.type//"")'
+fi
+
+section "Databases"
+info "User databases: $DATABASES_COUNT"
+info "All user schemas: tables=$DB_TABLES_COUNT views=$DB_VIEWS_COUNT indexes=$DB_INDEXES_COUNT"
+info "All user schemas: rows=$DB_TOTAL_ROWS data=$(bytes_h "$DB_DATA_BYTES") index=$(bytes_h "$DB_INDEX_BYTES") total=$(bytes_h "$DB_TOTAL_BYTES")"
+info "Charsets: $DB_CHARSETS_COUNT  Collations: $DB_COLLATIONS_COUNT  Engines: $DB_ENGINES_COUNT"
 
 section "Replication"
 info "Galera Synchronous replication: $HAVE_GALERA"
