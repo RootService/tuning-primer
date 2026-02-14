@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.25.0-devel"
+VERSION="3.26.0-devel"
 
 usage() {
   cat <<USAGE
@@ -512,6 +512,10 @@ TOTAL_TABLES=$(mysql_query_silent "SELECT COUNT(*) FROM information_schema.table
 # Engine data sizing (best-effort)
 INNODB_DATA_BYTES=$(mysql_query_silent "SELECT IFNULL(SUM(data_length+index_length),0) FROM information_schema.tables WHERE engine='InnoDB' AND table_schema NOT IN ('mysql','information_schema','performance_schema','sys');" | head -n 1 | tr -d '\r')
 
+# Storage engine statistics (best-effort)
+ENGINES_ENABLED_CSV=$(mysql_query_silent "SELECT ENGINE,SUPPORT FROM information_schema.ENGINES ORDER BY ENGINE;" | awk -F"\t" '($2=="YES"||$2=="DEFAULT"){print $1}' | tr '\n' ',' | sed 's/,$//')
+ENGINE_SIZES_JSON=$(mysql_query_silent "SELECT ENGINE, IFNULL(SUM(DATA_LENGTH+INDEX_LENGTH),0) AS total_bytes, COUNT(*) AS table_count, IFNULL(SUM(DATA_LENGTH),0) AS data_bytes, IFNULL(SUM(INDEX_LENGTH),0) AS index_bytes FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys') AND ENGINE IS NOT NULL GROUP BY ENGINE ORDER BY ENGINE;" | jq -Rn '[inputs | split("\t") | {engine:.[0], total_bytes:(.[1]|tonumber), table_count:(.[2]|tonumber), data_bytes:(.[3]|tonumber), index_bytes:(.[4]|tonumber)}]')
+
 # MyISAM / key buffer metrics
 KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
 KEY_READS=$(kv_get "$STATUS_TSV" Key_reads)
@@ -970,6 +974,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg performance_schema_memory_bytes "$PFS_MEMORY_BYTES" \
     --arg sys_schema_installed "$SYS_SCHEMA_INSTALLED" \
     --arg sys_schema_version "$SYS_SCHEMA_VERSION" \
+    --arg engines_enabled_csv "$ENGINES_ENABLED_CSV" \
+    --argjson engine_sizes "$ENGINE_SIZES_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1152,6 +1158,8 @@ if [ "$JSON" -eq 1 ]; then
       performance_schema_memory_bytes:$performance_schema_memory_bytes,
       sys_schema_installed:$sys_schema_installed,
       sys_schema_version:$sys_schema_version,
+      engines_enabled_csv:$engines_enabled_csv,
+      engine_sizes:$engine_sizes,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1251,6 +1259,13 @@ info "Server flavor:   $SERVER_FLAVOR"
 info "Uptime (s):      $UPTIME"
 # Upstream-like: summarize uptime/questions/connections + TX/RX
 info "Up for: $(printf "%s" "$UPTIME_S" )s ($QUESTIONS q [${QPS} qps], $CONNECTIONS conn, TX: $(bytes_h "$BYTES_SENT"), RX: $(bytes_h "$BYTES_RECEIVED"))"
+
+section "Storage Engine Statistics"
+[ -n "$ENGINES_ENABLED_CSV" ] && info "Enabled engines: $ENGINES_ENABLED_CSV" || true
+# Print top engines by size (best-effort)
+if printf '%s' "$ENGINE_SIZES_JSON" | jq -e . >/dev/null 2>&1; then
+  printf '%s' "$ENGINE_SIZES_JSON" | jq -r '.[] | "[INFO] " + .engine + ": " + (.total_bytes|tostring) + " bytes (tables=" + (.table_count|tostring) + ")"' | head -n 12
+fi
 
 section "Replication"
 info "Galera Synchronous replication: $HAVE_GALERA"
