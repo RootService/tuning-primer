@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="2.5.0-devel"
+VERSION="2.6.0-devel"
 
 usage() {
   cat <<USAGE
@@ -401,6 +401,13 @@ CONNECTIONS=$(kv_get "$STATUS_TSV" Connections)
 ABORTED_CONNECTS=$(kv_get "$STATUS_TSV" Aborted_connects)
 ABORTED_CLIENTS=$(kv_get "$STATUS_TSV" Aborted_clients)
 
+CONN_ERRORS_ACCEPT=$(kv_get "$STATUS_TSV" Connection_errors_accept)
+CONN_ERRORS_INTERNAL=$(kv_get "$STATUS_TSV" Connection_errors_internal)
+CONN_ERRORS_MAXCONN=$(kv_get "$STATUS_TSV" Connection_errors_max_connections)
+CONN_ERRORS_PEERADDR=$(kv_get "$STATUS_TSV" Connection_errors_peer_address)
+CONN_ERRORS_SELECT=$(kv_get "$STATUS_TSV" Connection_errors_select)
+CONN_ERRORS_TCPWRAP=$(kv_get "$STATUS_TSV" Connection_errors_tcpwrap)
+
 OPEN_TABLES=$(kv_get "$STATUS_TSV" Open_tables)
 
 SLOW_QUERY_LOG=$(kv_get "$VARS_TSV" slow_query_log)
@@ -504,6 +511,7 @@ PORT_VAR=$(kv_get "$VARS_TSV" port)
 LOG_BIN=$(kv_get "$VARS_TSV" log_bin)
 BINLOG_FORMAT=$(kv_get "$VARS_TSV" binlog_format)
 SYNC_BINLOG=$(kv_get "$VARS_TSV" sync_binlog)
+MAX_CONNECT_ERRORS=$(kv_get "$VARS_TSV" max_connect_errors)
 
 # Security-related variables
 SKIP_NAME_RESOLVE=$(kv_get "$VARS_TSV" skip_name_resolve)
@@ -629,6 +637,12 @@ if [ "$JSON" -eq 1 ]; then
     --arg aborted_connects_pct "$ABORT_PCT" \
     --arg aborted_clients "$ABORTED_CLIENTS" \
     --arg aborted_clients_pct "$ABORTED_CLIENTS_PCT" \
+    --arg connection_errors_accept "$CONN_ERRORS_ACCEPT" \
+    --arg connection_errors_internal "$CONN_ERRORS_INTERNAL" \
+    --arg connection_errors_max_connections "$CONN_ERRORS_MAXCONN" \
+    --arg connection_errors_peer_address "$CONN_ERRORS_PEERADDR" \
+    --arg connection_errors_select "$CONN_ERRORS_SELECT" \
+    --arg connection_errors_tcpwrap "$CONN_ERRORS_TCPWRAP" \
     --arg opened_tables_per_s "$OPENED_TABLES_PS" \
     --arg open_tables "$OPEN_TABLES" \
     --arg opened_table_definitions "$OPENED_TABLE_DEFS" \
@@ -667,6 +681,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg log_bin "$LOG_BIN" \
     --arg binlog_format "$BINLOG_FORMAT" \
     --arg sync_binlog "$SYNC_BINLOG" \
+    --arg max_connect_errors "$MAX_CONNECT_ERRORS" \
     --arg skip_name_resolve "$SKIP_NAME_RESOLVE" \
     --arg local_infile "$LOCAL_INFILE" \
     --arg require_secure_transport "$REQUIRE_SECURE_TRANSPORT" \
@@ -740,6 +755,14 @@ if [ "$JSON" -eq 1 ]; then
       aborted_connects_pct:$aborted_connects_pct,
       aborted_clients:$aborted_clients,
       aborted_clients_pct:$aborted_clients_pct,
+      connection_errors:{
+        accept:$connection_errors_accept,
+        internal:$connection_errors_internal,
+        max_connections:$connection_errors_max_connections,
+        peer_address:$connection_errors_peer_address,
+        select:$connection_errors_select,
+        tcpwrap:$connection_errors_tcpwrap
+      },
       opened_tables_per_s:$opened_tables_per_s,
       open_tables:$open_tables,
       opened_table_definitions:$opened_table_definitions,
@@ -778,6 +801,7 @@ if [ "$JSON" -eq 1 ]; then
       log_bin:$log_bin,
       binlog_format:$binlog_format,
       sync_binlog:$sync_binlog,
+      max_connect_errors:$max_connect_errors,
       skip_name_resolve:$skip_name_resolve,
       local_infile:$local_infile,
       require_secure_transport:$require_secure_transport,
@@ -927,6 +951,17 @@ info "Aborted_connects:     $ABORTED_CONNECTS (${ABORT_PCT}%)"
 [ "$(num "$ABORTED_CONNECTS")" -gt 0 ] && [ "$ABORT_PCT" -ge 5 ] && warn "High aborted connect rate (${ABORT_PCT}%)"
 info "Aborted_clients:      $ABORTED_CLIENTS (${ABORTED_CLIENTS_PCT}%)"
 [ "$(num "$ABORTED_CLIENTS")" -gt 0 ] && [ "$ABORTED_CLIENTS_PCT" -ge 5 ] && warn "High aborted clients rate (${ABORTED_CLIENTS_PCT}%)" || true
+
+section "Connection Errors"
+info "Connection_errors_accept:          $CONN_ERRORS_ACCEPT"
+info "Connection_errors_internal:        $CONN_ERRORS_INTERNAL"
+info "Connection_errors_max_connections: $CONN_ERRORS_MAXCONN"
+info "Connection_errors_peer_address:    $CONN_ERRORS_PEERADDR"
+info "Connection_errors_select:          $CONN_ERRORS_SELECT"
+info "Connection_errors_tcpwrap:         $CONN_ERRORS_TCPWRAP"
+
+ce=$(( $(num "$CONN_ERRORS_ACCEPT") + $(num "$CONN_ERRORS_INTERNAL") + $(num "$CONN_ERRORS_MAXCONN") + $(num "$CONN_ERRORS_PEERADDR") + $(num "$CONN_ERRORS_SELECT") + $(num "$CONN_ERRORS_TCPWRAP") ))
+[ "$ce" -gt 0 ] && warn "Connection errors detected ($ce total)" || ok "No connection errors detected"
 
 section "Memory"
 info "key_buffer_size:         $(bytes_h "$KEY_BUFFER_SIZE")"
