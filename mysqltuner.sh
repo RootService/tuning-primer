@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.0.0-devel"
+VERSION="3.1.0-devel"
 
 usage() {
   cat <<USAGE
@@ -573,7 +573,17 @@ else
 fi
 
 # Query cache efficiency (best-effort)
+# Upstream-like: Qcache_hits / (Com_select + Qcache_hits)
 qch=$(num "$QCACHE_HITS")
+cs=$(num "$COM_SELECT")
+qden=$((qch + cs))
+if [ "$qden" -gt 0 ]; then
+  QCACHE_EFF_PCT=$(pct "$qch" "$qden")
+else
+  QCACHE_EFF_PCT=""
+fi
+
+# Alternate ratio (internal): hits / (hits + inserts)
 qci=$(num "$QCACHE_INSERTS")
 qct=$((qch + qci))
 if [ "$qct" -gt 0 ]; then
@@ -780,6 +790,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg qcache_free_memory "$QCACHE_FREE_MEM" \
     --arg qcache_free_blocks "$QCACHE_FREE_BLOCKS" \
     --arg qcache_total_blocks "$QCACHE_TOTAL_BLOCKS" \
+    --arg qcache_efficiency_pct "${QCACHE_EFF_PCT:-}" \
     --arg qcache_hit_pct "$QCACHE_HIT_PCT" \
     --arg qcache_free_blocks_pct "$QCACHE_FREE_BLOCKS_PCT" \
     --arg qcache_used_pct "${QCACHE_USED_PCT:-}" \
@@ -920,6 +931,7 @@ if [ "$JSON" -eq 1 ]; then
       qcache_free_memory:$qcache_free_memory,
       qcache_free_blocks:$qcache_free_blocks,
       qcache_total_blocks:$qcache_total_blocks,
+      qcache_efficiency_pct:$qcache_efficiency_pct,
       qcache_hit_pct:$qcache_hit_pct,
       qcache_free_blocks_pct:$qcache_free_blocks_pct,
       qcache_used_pct:$qcache_used_pct,
@@ -1124,9 +1136,12 @@ if [ "$(num "$QCACHE_SIZE")" -gt 0 ]; then
   if [ "$MYSQL_VER_MAJ" -ge 8 ]; then
     warn "query_cache_size > 0 on MySQL 8+ (query cache removed upstream; check compatibility)"
   fi
+  if [ -n "${QCACHE_EFF_PCT:-}" ]; then
+    info "Query cache efficiency:   ${QCACHE_EFF_PCT}%"
+    [ "$(num "$QCACHE_EFF_PCT")" -lt 20 ] && warn "Low query cache efficiency (${QCACHE_EFF_PCT}%)" || true
+  fi
   if [ -n "${QCACHE_HIT_PCT:-}" ]; then
-    info "Query cache hit rate:     ${QCACHE_HIT_PCT}%"
-    [ "$QCACHE_HIT_PCT" -lt 20 ] && warn "Low query cache hit rate (${QCACHE_HIT_PCT}%)" || true
+    info "Query cache hit/(hit+ins): ${QCACHE_HIT_PCT}%"
   fi
   [ "$(num "$QCACHE_LOWPRUNES")" -gt 0 ] && warn "Query cache prunes detected ($QCACHE_LOWPRUNES)" || true
   if [ -n "${QCACHE_FREE_BLOCKS_PCT:-}" ] && [ "$(num "$QCACHE_FREE_BLOCKS_PCT")" -ge 20 ]; then
