@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.50.0-devel"
+VERSION="3.51.0-devel"
 
 usage() {
   cat <<USAGE
@@ -803,7 +803,12 @@ if [ -n "$SCHEMA_DIR" ]; then
       ent=$(printf '%s' "$sch.$tb" | sed 's/\./_/g')
       printf '  %s {\n' "$ent"
       # PK columns (if any)
-      printf '%s' "$PK_COLS_JSON" | jq -r --arg s "$sch" --arg t "$tb" '.[] | select(.schema==$s and .table==$t) | "    string " + .column + " PK"'
+      pk_lines=$(printf '%s' "$PK_COLS_JSON" | jq -r --arg s "$sch" --arg t "$tb" '.[] | select(.schema==$s and .table==$t) | "    string " + .column + " PK"')
+      if [ -n "$pk_lines" ]; then
+        printf '%s\n' "$pk_lines"
+      else
+        printf '%s\n' "    string _no_pk"
+      fi
       printf '%s\n' '  }'
     done
 
@@ -851,11 +856,11 @@ if [ -n "$SCHEMA_DIR" ]; then
         printf '%s\n' "- TEXT columns: $(printf '%s' "$t" | jq -r '.text_columns//0')"
         printf '%s\n\n' "- BLOB columns: $(printf '%s' "$t" | jq -r '.blob_columns//0')"
         printf '## Indexes\n\n'
-        printf '%s' "$t" | jq -r '.indexes[]? | "- " + .name + " (" + (.type//"") + ") cols=" + (.columns|join(","))'
+        printf '%s' "$t" | jq -r '.indexes[]? | "- " + .name + " (" + (.type//"") + ")" + (if (.non_unique|tonumber)==0 then " UNIQUE" else "" end) + " cols=" + (.columns|join(","))'
 
         printf '\n## Columns\n\n'
         mysql_query_silent "SELECT column_name, column_type, is_nullable, column_default, column_key, extra FROM information_schema.columns WHERE table_schema='$db' AND table_name='$tb' ORDER BY ordinal_position;" 2>/dev/null | \
-          jq -Rn '[inputs | select(length>0) | split("\t") | {name:.[0], type:.[1], nullable:.[2], default:.[3], key:.[4], extra:.[5]}] | .[] | "- " + .name + ": " + .type + " nullable=" + .nullable + (if (.key|length)>0 then (" key="+.key) else "" end) + (if (.extra|length)>0 then (" extra="+.extra) else "" end)'
+          jq -Rn '[inputs | select(length>0) | split("\t") | {name:.[0], type:.[1], nullable:.[2], default:.[3], key:.[4], extra:.[5]}] | .[] | "- " + .name + ": " + .type + " nullable=" + .nullable + (if (.key|length)>0 then (" key="+.key) else "" end) + (if (.extra|length)>0 then (" extra="+.extra) else "" end) + (if (.default|length)>0 and .default!="NULL" then (" default="+.default) else "" end)'
       } | write_text_file "$SCHEMA_DIR/databases/$db/$tb.md"
     done
   done
@@ -2020,6 +2025,11 @@ info "Duplicate indexes (same cols/type/unique): $DUPLICATE_INDEXES_COUNT"
 [ "$(num "$DUPLICATE_INDEXES_COUNT")" -gt 0 ] && printf '%s' "$DUPLICATE_INDEXES_JSON" | jq -r '.[:10][] | "[WARN] Duplicate indexes on " + .schema + "." + .table + ": " + (.indexes|join(",")) + " cols=" + (.columns|join(","))' || true
 info "Redundant (prefix) indexes: $REDUNDANT_INDEXES_COUNT"
 [ "$(num "$REDUNDANT_INDEXES_COUNT")" -gt 0 ] && printf '%s' "$REDUNDANT_INDEXES_JSON" | jq -r '.[:10][] | "[WARN] Redundant index " + .schema + "." + .table + "." + .redundant + " covered by " + .covered_by' || true
+
+# Recommendations
+[ "$(num "$TABLES_NO_INDEX_COUNT")" -gt 0 ] && warn "Some tables have no indexes (see warnings above). Add at least a PRIMARY KEY." || true
+[ "$(num "$DUPLICATE_INDEXES_COUNT")" -gt 0 ] && warn "Duplicate indexes detected. Consider dropping redundant ones." || true
+[ "$(num "$REDUNDANT_INDEXES_COUNT")" -gt 0 ] && warn "Redundant prefix indexes detected. Consider dropping narrower ones if covered by wider indexes." || true
 
 section "Replication"
 info "Galera Synchronous replication: $HAVE_GALERA"
