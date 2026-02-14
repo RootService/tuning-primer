@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="2.9.0-devel"
+VERSION="3.0.0-devel"
 
 usage() {
   cat <<USAGE
@@ -426,6 +426,12 @@ SLOW_QUERIES=$(kv_get "$STATUS_TSV" Slow_queries)
 
 QUESTIONS=$(kv_get "$STATUS_TSV" Questions)
 
+COM_SELECT=$(kv_get "$STATUS_TSV" Com_select)
+COM_INSERT=$(kv_get "$STATUS_TSV" Com_insert)
+COM_UPDATE=$(kv_get "$STATUS_TSV" Com_update)
+COM_DELETE=$(kv_get "$STATUS_TSV" Com_delete)
+COM_REPLACE=$(kv_get "$STATUS_TSV" Com_replace)
+
 CREATED_TMP_TABLES=$(kv_get "$STATUS_TSV" Created_tmp_tables)
 CREATED_TMP_DISK_TABLES=$(kv_get "$STATUS_TSV" Created_tmp_disk_tables)
 TMP_TABLE_SIZE=$(kv_get "$VARS_TSV" tmp_table_size)
@@ -542,6 +548,18 @@ OPENED_TABLES_PS=$(rate_per_s "$OPENED_TABLES" "$UPTIME_S")
 # Network throughput (best-effort)
 BYTES_RECEIVED_PS=$(rate_per_s "$BYTES_RECEIVED" "$UPTIME_S")
 BYTES_SENT_PS=$(rate_per_s "$BYTES_SENT" "$UPTIME_S")
+
+# Read/write mix (best-effort)
+TOTAL_READS=$(num "$COM_SELECT")
+TOTAL_WRITES=$(( $(num "$COM_DELETE") + $(num "$COM_INSERT") + $(num "$COM_UPDATE") + $(num "$COM_REPLACE") ))
+TOTAL_RW=$(( $(num "$TOTAL_READS") + $(num "$TOTAL_WRITES") ))
+if [ "$TOTAL_RW" -gt 0 ]; then
+  PCT_READS=$(pct "$TOTAL_READS" "$TOTAL_RW")
+  PCT_WRITES=$((100 - $(num "$PCT_READS")))
+else
+  PCT_READS=""
+  PCT_WRITES=""
+fi
 
 # Thread cache hit rate (best-effort)
 conn=$(num "$CONNECTIONS")
@@ -674,6 +692,13 @@ if [ "$JSON" -eq 1 ]; then
     --arg bytes_sent "$BYTES_SENT" \
     --arg bytes_received_per_s "$BYTES_RECEIVED_PS" \
     --arg bytes_sent_per_s "$BYTES_SENT_PS" \
+    --arg com_select "$COM_SELECT" \
+    --arg com_insert "$COM_INSERT" \
+    --arg com_update "$COM_UPDATE" \
+    --arg com_delete "$COM_DELETE" \
+    --arg com_replace "$COM_REPLACE" \
+    --arg pct_reads "${PCT_READS:-}" \
+    --arg pct_writes "${PCT_WRITES:-}" \
     --arg max_connections "$MAX_CONNECTIONS" \
     --arg max_used_connections "$MAX_USED_CONNECTIONS" \
     --arg max_used_connections_pct "${mupct:-}" \
@@ -805,6 +830,13 @@ if [ "$JSON" -eq 1 ]; then
       bytes_sent:$bytes_sent,
       bytes_received_per_s:$bytes_received_per_s,
       bytes_sent_per_s:$bytes_sent_per_s,
+      com_select:$com_select,
+      com_insert:$com_insert,
+      com_update:$com_update,
+      com_delete:$com_delete,
+      com_replace:$com_replace,
+      pct_reads:$pct_reads,
+      pct_writes:$pct_writes,
       max_connections:$max_connections,
       max_used_connections:$max_used_connections,
       max_used_connections_pct:$max_used_connections_pct,
@@ -998,6 +1030,16 @@ fi
 section "Throughput"
 info "Questions:   $QUESTIONS (QPS: $QPS)"
 info "Connections: $CONNECTIONS (CPS: $CPS)"
+
+section "Read / Write"
+info "Com_select:  $COM_SELECT"
+info "Com_insert:  $COM_INSERT"
+info "Com_update:  $COM_UPDATE"
+info "Com_delete:  $COM_DELETE"
+info "Com_replace: $COM_REPLACE"
+if [ -n "${PCT_READS:-}" ]; then
+  info "Reads/Writes: ${PCT_READS}% / ${PCT_WRITES}%"
+fi
 
 section "Network Throughput"
 info "Bytes_received: $BYTES_RECEIVED (~${BYTES_RECEIVED_PS} B/s)"
