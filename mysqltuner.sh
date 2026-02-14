@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.7.0-devel"
+VERSION="3.8.0-devel"
 
 usage() {
   cat <<USAGE
@@ -440,6 +440,14 @@ CREATED_TMP_DISK_TABLES=$(kv_get "$STATUS_TSV" Created_tmp_disk_tables)
 TMP_TABLE_SIZE=$(kv_get "$VARS_TSV" tmp_table_size)
 MAX_HEAP_TABLE_SIZE=$(kv_get "$VARS_TSV" max_heap_table_size)
 
+# Effective tmp table size (global)
+MAX_TMP_TABLE_SIZE=$TMP_TABLE_SIZE
+if [ "$(num "$MAX_HEAP_TABLE_SIZE")" -gt 0 ] && [ "$(num "$TMP_TABLE_SIZE")" -gt 0 ]; then
+  if [ "$(num "$MAX_HEAP_TABLE_SIZE")" -lt "$(num "$TMP_TABLE_SIZE")" ]; then
+    MAX_TMP_TABLE_SIZE=$MAX_HEAP_TABLE_SIZE
+  fi
+fi
+
 INNODB_BP_SIZE=$(kv_get "$VARS_TSV" innodb_buffer_pool_size)
 INNODB_BP_INSTANCES=$(kv_get "$VARS_TSV" innodb_buffer_pool_instances)
 INNODB_BP_READ_REQ=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_read_requests)
@@ -717,7 +725,7 @@ fi
 
 # Memory estimate (best-effort)
 RAM_TOTAL=$(mem_total_bytes)
-GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SIZE")" -v c="$(num "$QCACHE_SIZE")" 'BEGIN{printf "%d", a+b+c}')
+GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SIZE")" -v c="$(num "$QCACHE_SIZE")" -v d="$(num "$MAX_TMP_TABLE_SIZE")" 'BEGIN{printf "%d", a+b+c+d}')
 PER_THREAD_BUFFERS=$(awk -v a="$(num "$READ_BUFFER_SIZE")" -v b="$(num "$READ_RND_BUFFER_SIZE")" -v c="$(num "$SORT_BUFFER_SIZE")" -v d="$(num "$JOIN_BUFFER_SIZE")" -v e="$(num "$THREAD_STACK")" -v f="$(num "$BINLOG_CACHE_SIZE")" 'BEGIN{printf "%d", a+b+c+d+e+f}')
 MAX_MEM=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mc="$(num "$MAX_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mc)}')
 MAX_MEM_AT_MAX_USED=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mu="$(num "$MAX_USED_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mu)}')
@@ -895,6 +903,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg max_password_checks "$MAX_PASSWORD_CHECKS" \
     --arg ram_total_bytes "$RAM_TOTAL" \
     --arg global_buffers_bytes "$GLOBAL_BUFFERS" \
+    --arg max_tmp_table_size "$MAX_TMP_TABLE_SIZE" \
     --arg per_thread_buffers_bytes "$PER_THREAD_BUFFERS" \
     --arg max_memory_estimate_bytes "$MAX_MEM" \
     --arg max_memory_at_max_used_bytes "$MAX_MEM_AT_MAX_USED" \
@@ -1050,6 +1059,7 @@ if [ "$JSON" -eq 1 ]; then
       max_password_checks:$max_password_checks,
       ram_total_bytes:$ram_total_bytes,
       global_buffers_bytes:$global_buffers_bytes,
+      max_tmp_table_size:$max_tmp_table_size,
       per_thread_buffers_bytes:$per_thread_buffers_bytes,
       max_memory_estimate_bytes:$max_memory_estimate_bytes,
       max_memory_at_max_used_bytes:$max_memory_at_max_used_bytes,
@@ -1196,6 +1206,7 @@ info "key_buffer_size:         $(bytes_h "$KEY_BUFFER_SIZE")"
 info "innodb_buffer_pool_size: $(bytes_h "$INNODB_BP_SIZE")"
 info "query_cache_size:        $(bytes_h "$QCACHE_SIZE")"
 info "Global buffers:          $(bytes_h "$GLOBAL_BUFFERS")"
+info "  max_tmp_table_size:    $(bytes_h "$MAX_TMP_TABLE_SIZE")"
 info "Per-thread buffers:      $(bytes_h "$PER_THREAD_BUFFERS")"
 info "  read_buffer_size:      $(bytes_h "$READ_BUFFER_SIZE")"
 info "  read_rnd_buffer_size:  $(bytes_h "$READ_RND_BUFFER_SIZE")"
@@ -1301,14 +1312,7 @@ info "Created_tmp_tables:      $CREATED_TMP_TABLES"
 info "Created_tmp_disk_tables: $CREATED_TMP_DISK_TABLES"
 info "tmp_table_size:          $(bytes_h "$TMP_TABLE_SIZE")"
 info "max_heap_table_size:     $(bytes_h "$MAX_HEAP_TABLE_SIZE")"
-
-efftmp=$TMP_TABLE_SIZE
-if [ "$(num "$MAX_HEAP_TABLE_SIZE")" -gt 0 ] && [ "$(num "$TMP_TABLE_SIZE")" -gt 0 ]; then
-  if [ "$(num "$MAX_HEAP_TABLE_SIZE")" -lt "$(num "$TMP_TABLE_SIZE")" ]; then
-    efftmp=$MAX_HEAP_TABLE_SIZE
-  fi
-  info "effective_tmp_table_size: $(bytes_h "$efftmp") (min of tmp_table_size/max_heap_table_size)"
-fi
+info "effective_tmp_table_size: $(bytes_h "$MAX_TMP_TABLE_SIZE") (min of tmp_table_size/max_heap_table_size)"
 
 tmp=$(num "$CREATED_TMP_TABLES")
 tmpdisk=$(num "$CREATED_TMP_DISK_TABLES")
