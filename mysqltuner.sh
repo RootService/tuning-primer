@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.18.0-devel"
+VERSION="3.19.0-devel"
 
 usage() {
   cat <<USAGE
@@ -965,6 +965,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg max_total_buffers_bytes "$MAX_TOTAL_BUFFERS" \
     --arg pct_max_used_memory "${PCT_MAX_USED_MEMORY:-}" \
     --arg pct_max_peak_memory "${PCT_MAX_PEAK_MEMORY:-}" \
+    --arg max_used_memory_bytes "$MAX_TOTAL_BUFFERS" \
+    --arg max_peak_memory_bytes "$TOTAL_BUFFERS" \
     --arg cve_found "$CVE_FOUND" \
     --argjson cve_list "$CVE_LIST_JSON" \
     --arg weak_password_hits "$WEAK_PASSWORD_HITS" \
@@ -1136,6 +1138,8 @@ if [ "$JSON" -eq 1 ]; then
       max_total_buffers_bytes:$max_total_buffers_bytes,
       pct_max_used_memory:$pct_max_used_memory,
       pct_max_peak_memory:$pct_max_peak_memory,
+      max_used_memory_bytes:$max_used_memory_bytes,
+      max_peak_memory_bytes:$max_peak_memory_bytes,
       cve_found:$cve_found,
       cve_list:$cve_list,
       weak_password_hits:$weak_password_hits,
@@ -1303,13 +1307,15 @@ info "Total per-thread buffers: $(bytes_h "$TOTAL_PER_THREAD_BUFFERS")"
 info "Max per-thread buffers:   $(bytes_h "$MAX_TOTAL_PER_THREAD_BUFFERS") (at Max_used_connections)"
 info "Total buffers:           $(bytes_h "$TOTAL_BUFFERS")"
 info "Max total buffers:       $(bytes_h "$MAX_TOTAL_BUFFERS") (at Max_used_connections)"
+
+# Upstream-like memory summary
 if [ -n "${PCT_MAX_USED_MEMORY:-}" ]; then
-  info "Max used memory % of RAM: ${PCT_MAX_USED_MEMORY}%"
-  [ "$(num "$PCT_MAX_USED_MEMORY")" -ge 85 ] && warn "Max used memory is high (${PCT_MAX_USED_MEMORY}% of RAM)" || true
+  info "Maximum reached memory usage:  $(bytes_h "$MAX_TOTAL_BUFFERS") (${PCT_MAX_USED_MEMORY}% of installed RAM)"
+  [ "$(num "$PCT_MAX_USED_MEMORY")" -gt 85 ] && warn "Maximum reached memory usage is high (${PCT_MAX_USED_MEMORY}% of RAM)" || true
 fi
 if [ -n "${PCT_MAX_PEAK_MEMORY:-}" ]; then
-  info "Max peak memory % of RAM: ${PCT_MAX_PEAK_MEMORY}%"
-  [ "$(num "$PCT_MAX_PEAK_MEMORY")" -ge 85 ] && warn "Max peak memory is high (${PCT_MAX_PEAK_MEMORY}% of RAM)" || true
+  info "Maximum possible memory usage: $(bytes_h "$TOTAL_BUFFERS") (${PCT_MAX_PEAK_MEMORY}% of installed RAM)"
+  [ "$(num "$PCT_MAX_PEAK_MEMORY")" -gt 85 ] && warn "Maximum possible memory usage is high (${PCT_MAX_PEAK_MEMORY}% of RAM)" || true
 fi
 if [ "$(num "$RAM_TOTAL")" -gt 0 ]; then
   info "System RAM (best-effort): $(bytes_h "$RAM_TOTAL")"
