@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="2.8.1-devel"
+VERSION="2.9.0-devel"
 
 usage() {
   cat <<USAGE
@@ -132,6 +132,13 @@ rate_per_s() {
   v=$(num "$1"); u=$(num "$2")
   [ "$u" -le 0 ] && { echo 0; return; }
   awk -v v="$v" -v u="$u" 'BEGIN{printf "%.2f", v/u}'
+}
+
+per_day() {
+  # value per day given total and uptime seconds
+  v=$(num "$1"); u=$(num "$2")
+  [ "$u" -le 0 ] && { echo 0; return; }
+  awk -v v="$v" -v u="$u" 'BEGIN{printf "%d", v/(u/86400)}'
 }
 
 pct() {
@@ -557,6 +564,33 @@ else
   QCACHE_HIT_PCT=""
 fi
 
+# Query cache used percent (best-effort)
+qcs=$(num "$QCACHE_SIZE")
+qcfm=$(num "$QCACHE_FREE_MEM")
+if [ "$qcs" -gt 0 ]; then
+  # used = 100 - free/query_cache_size
+  QCACHE_USED_PCT=$((100 - $(pct "$qcfm" "$qcs")))
+  [ "$QCACHE_USED_PCT" -lt 0 ] && QCACHE_USED_PCT=0
+  [ "$QCACHE_USED_PCT" -gt 100 ] && QCACHE_USED_PCT=100
+else
+  QCACHE_USED_PCT=""
+fi
+
+# Query cache prunes per day (best-effort)
+QCACHE_PRUNES_PER_DAY=$(per_day "$QCACHE_LOWPRUNES" "$UPTIME_S")
+
+# Sorting
+TOTAL_SORTS=$(( $(num "$SORT_SCAN") + $(num "$SORT_RANGE") ))
+if [ "$TOTAL_SORTS" -gt 0 ]; then
+  SORT_MERGE_PCT=$(pct "$SORT_MERGE_PASSES" "$TOTAL_SORTS")
+else
+  SORT_MERGE_PCT=""
+fi
+
+# Joins without indexes (best-effort)
+JOINS_WITHOUT_INDEXES=$(( $(num "$SELECT_FULL_JOIN") + $(num "$SELECT_RANGE_CHECK") ))
+JOINS_WO_IDX_PER_DAY=$(per_day "$JOINS_WITHOUT_INDEXES" "$UPTIME_S")
+
 # Table lock waited percent (best-effort)
 tli=$(num "$TABLE_LOCKS_IMMEDIATE")
 tlw=$(num "$TABLE_LOCKS_WAITED")
@@ -723,6 +757,11 @@ if [ "$JSON" -eq 1 ]; then
     --arg qcache_total_blocks "$QCACHE_TOTAL_BLOCKS" \
     --arg qcache_hit_pct "$QCACHE_HIT_PCT" \
     --arg qcache_free_blocks_pct "$QCACHE_FREE_BLOCKS_PCT" \
+    --arg qcache_used_pct "${QCACHE_USED_PCT:-}" \
+    --arg qcache_prunes_per_day "$QCACHE_PRUNES_PER_DAY" \
+    --arg sort_merge_pct "${SORT_MERGE_PCT:-}" \
+    --arg joins_without_indexes "$JOINS_WITHOUT_INDEXES" \
+    --arg joins_without_indexes_per_day "$JOINS_WO_IDX_PER_DAY" \
     --arg select_full_join "$SELECT_FULL_JOIN" \
     --arg select_full_range_join "$SELECT_FULL_RANGE_JOIN" \
     --arg select_range_check "$SELECT_RANGE_CHECK" \
@@ -851,6 +890,11 @@ if [ "$JSON" -eq 1 ]; then
       qcache_total_blocks:$qcache_total_blocks,
       qcache_hit_pct:$qcache_hit_pct,
       qcache_free_blocks_pct:$qcache_free_blocks_pct,
+      qcache_used_pct:$qcache_used_pct,
+      qcache_prunes_per_day:$qcache_prunes_per_day,
+      sort_merge_pct:$sort_merge_pct,
+      joins_without_indexes:$joins_without_indexes,
+      joins_without_indexes_per_day:$joins_without_indexes_per_day,
       select_full_join:$select_full_join,
       select_full_range_join:$select_full_range_join,
       select_range_check:$select_range_check,
@@ -1029,6 +1073,10 @@ info "Qcache_total_blocks:      $QCACHE_TOTAL_BLOCKS"
 if [ -n "${QCACHE_FREE_BLOCKS_PCT:-}" ]; then
   info "Query cache frag (free blocks): ${QCACHE_FREE_BLOCKS_PCT}%"
 fi
+if [ -n "${QCACHE_USED_PCT:-}" ]; then
+  info "Query cache used:          ${QCACHE_USED_PCT}%"
+fi
+info "Query cache prunes/day:   $QCACHE_PRUNES_PER_DAY"
 
 if [ "$(num "$QCACHE_SIZE")" -gt 0 ]; then
   if [ "$MYSQL_VER_MAJ" -ge 8 ]; then
@@ -1052,11 +1100,16 @@ info "Sort_scan:         $SORT_SCAN"
 info "Sort_range:        $SORT_RANGE"
 info "Sort_rows:         $SORT_ROWS"
 [ "$(num "$SORT_MERGE_PASSES")" -gt 0 ] && warn "Sort_merge_passes > 0 (consider increasing sort_buffer_size or optimizing sorts)" || true
+if [ -n "${SORT_MERGE_PCT:-}" ]; then
+  info "Sort merge %:      ${SORT_MERGE_PCT}% (merge_passes / (scan+range))"
+  [ "$(num "$SORT_MERGE_PCT")" -ge 5 ] && warn "High sort merge percentage (${SORT_MERGE_PCT}%)" || true
+fi
 
 section "Joins"
 info "Select_full_join:       $SELECT_FULL_JOIN"
 info "Select_full_range_join: $SELECT_FULL_RANGE_JOIN"
 info "Select_range_check:     $SELECT_RANGE_CHECK"
+info "Joins without indexes:  $JOINS_WITHOUT_INDEXES (~${JOINS_WO_IDX_PER_DAY}/day)"
 [ "$(num "$SELECT_FULL_JOIN")" -gt 0 ] && warn "Select_full_join > 0 (joins without indexes detected)" || true
 [ "$(num "$SELECT_RANGE_CHECK")" -gt 0 ] && warn "Select_range_check > 0 (joins without keys in some cases)" || true
 
