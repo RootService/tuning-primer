@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.21.0-devel"
+VERSION="3.22.0-devel"
 
 usage() {
   cat <<USAGE
@@ -556,6 +556,15 @@ SYNC_BINLOG=$(kv_get "$VARS_TSV" sync_binlog)
 BINLOG_CACHE_SIZE=$(kv_get "$VARS_TSV" binlog_cache_size)
 GTID_MODE=$(kv_get "$VARS_TSV" gtid_mode)
 GTID_CURRENT_POS=$(kv_get "$VARS_TSV" gtid_current_pos)
+
+# Galera / wsrep (MariaDB)
+WSREP_ON=$(kv_get "$VARS_TSV" wsrep_on)
+WSREP_PROVIDER_OPTIONS=$(kv_get "$VARS_TSV" wsrep_provider_options)
+HAVE_GALERA=no
+if [ -n "$WSREP_PROVIDER_OPTIONS" ] && [ "${WSREP_ON:-OFF}" != "OFF" ]; then
+  HAVE_GALERA=yes
+fi
+
 MAX_CONNECT_ERRORS=$(kv_get "$VARS_TSV" max_connect_errors)
 
 # Thread pool (best-effort)
@@ -672,6 +681,21 @@ if [ "$bcu" -gt 0 ]; then
   BINLOG_CACHE_PCT=$(pct "$((bcu - bcdu))" "$bcu")
 else
   BINLOG_CACHE_PCT=""
+fi
+
+# Galera gcache size (best-effort) from wsrep_provider_options
+GCACHE_SIZE_BYTES=0
+if [ "$HAVE_GALERA" = "yes" ] && [ -n "$WSREP_PROVIDER_OPTIONS" ]; then
+  gcs=$(printf "%s" "$WSREP_PROVIDER_OPTIONS" | tr ';' '\n' | awk -F= '$1 ~ /^[[:space:]]*gcache\.size[[:space:]]*$/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}')
+  if [ -n "$gcs" ]; then
+    # interpret suffix K/M/G (binary-ish 1024)
+    case "$gcs" in
+      *K|*k) n=${gcs%[Kk]}; GCACHE_SIZE_BYTES=$(( $(num "$n") * 1024 )) ;;
+      *M|*m) n=${gcs%[Mm]}; GCACHE_SIZE_BYTES=$(( $(num "$n") * 1024 * 1024 )) ;;
+      *G|*g) n=${gcs%[Gg]}; GCACHE_SIZE_BYTES=$(( $(num "$n") * 1024 * 1024 * 1024 )) ;;
+      *) GCACHE_SIZE_BYTES=$(num "$gcs") ;;
+    esac
+  fi
 fi
 
 # Query cache fragmentation percent (best-effort)
@@ -908,6 +932,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg binlog_cache_pct "${BINLOG_CACHE_PCT:-}" \
     --arg gtid_mode "$GTID_MODE" \
     --arg gtid_current_pos "$GTID_CURRENT_POS" \
+    --arg have_galera "$HAVE_GALERA" \
+    --arg galera_gcache_bytes "$GCACHE_SIZE_BYTES" \
     --arg max_connect_errors "$MAX_CONNECT_ERRORS" \
     --arg thread_handling "$THREAD_HANDLING" \
     --arg have_threadpool "$HAVE_THREADPOOL" \
@@ -1083,6 +1109,8 @@ if [ "$JSON" -eq 1 ]; then
       binlog_cache_pct:$binlog_cache_pct,
       gtid_mode:$gtid_mode,
       gtid_current_pos:$gtid_current_pos,
+      have_galera:$have_galera,
+      galera_gcache_bytes:$galera_gcache_bytes,
       max_connect_errors:$max_connect_errors,
       thread_handling:$thread_handling,
       have_threadpool:$have_threadpool,
@@ -1182,6 +1210,8 @@ info "Uptime (s):      $UPTIME"
 info "Up for: $(printf "%s" "$UPTIME_S" )s ($QUESTIONS q [${QPS} qps], $CONNECTIONS conn, TX: $(bytes_h "$BYTES_SENT"), RX: $(bytes_h "$BYTES_RECEIVED"))"
 
 section "Replication"
+info "Galera Synchronous replication: $HAVE_GALERA"
+[ "$HAVE_GALERA" = "yes" ] && info "Galera GCache Max memory usage: $(bytes_h "$GCACHE_SIZE_BYTES")" || true
 info "role: $REPL_ROLE"
 if [ "$REPL_ROLE" = "replica" ] || [ "$REPL_ROLE" = "master+replica" ]; then
   [ -n "$REPL_SOURCE_HOST" ] && info "source_host: $REPL_SOURCE_HOST"
