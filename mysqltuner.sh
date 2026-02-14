@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="0.6.0-devel"
+VERSION="0.7.0-devel"
 
 usage() {
   cat <<USAGE
@@ -32,7 +32,6 @@ USAGE
 }
 
 die() { echo "ERROR: $*" 1>&2; exit 1; }
-
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "$1 not found in PATH"; }
 
 mktemp_dir() {
@@ -98,12 +97,8 @@ mysql_query() {
 mysql_query_silent() { mysql_query "$1" 2>/dev/null; }
 
 # ---- KV helpers ------------------------------------------------------------
-kv_get() {
-  awk -F"\t" -v k="$2" '($1==k){sub(/^[^\t]*\t/, ""); print; exit}' "$1"
-}
-kv_dump_file() {
-  mysql_query_silent "$1" | awk 'NF>=2{print $1"\t"$2}' >"$2"
-}
+kv_get() { awk -F"\t" -v k="$2" '($1==k){sub(/^[^\t]*\t/, ""); print; exit}' "$1"; }
+kv_dump_file() { mysql_query_silent "$1" | awk 'NF>=2{print $1"\t"$2}' >"$2"; }
 
 # ---- Formatting helpers ----------------------------------------------------
 num() {
@@ -205,8 +200,10 @@ OPENED_TABLES_PS=$(rate_per_s "$OPENED_TABLES" "$UPTIME_S")
 
 # Try to read mysql.user (may fail if no privileges)
 USER_ROWS=$(mysql_query_silent "SELECT user,host,plugin,authentication_string FROM mysql.user" 2>/dev/null || true)
+USER_COL4="authentication_string"
 if [ -z "$USER_ROWS" ]; then
   USER_ROWS=$(mysql_query_silent "SELECT user,host,plugin,password FROM mysql.user" 2>/dev/null || true)
+  USER_COL4="password"
 fi
 
 # ---- Output (JSON) ---------------------------------------------------------
@@ -235,6 +232,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg have_ssl "$HAVE_SSL" \
     --arg performance_schema "$PERFORMANCE_SCHEMA" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
+    --arg mysql_user_readable "$( [ -n "$USER_ROWS" ] && echo yes || echo no )" \
+    --arg mysql_user_col4 "$USER_COL4" \
     '{
       version:$version,
       flavor:$flavor,
@@ -258,7 +257,9 @@ if [ "$JSON" -eq 1 ]; then
       require_secure_transport:$require_secure_transport,
       have_ssl:$have_ssl,
       performance_schema:$performance_schema,
-      max_allowed_packet:$max_allowed_packet
+      max_allowed_packet:$max_allowed_packet,
+      mysql_user_readable:$mysql_user_readable,
+      mysql_user_col4:$mysql_user_col4
     }'
   exit 0
 fi
@@ -309,8 +310,7 @@ section "InnoDB"
 bprr=$(num "$INNODB_BP_READ_REQ")
 bpr=$(num "$INNODB_BP_READS")
 if [ "$bprr" -gt 0 ]; then
-  hit=$((bprr - bpr))
-  [ "$hit" -lt 0 ] && hit=0
+  hit=$((bprr - bpr)); [ "$hit" -lt 0 ] && hit=0
   hp=$(pct "$hit" "$bprr")
   info "InnoDB BP hit rate: ${hp}%"
   [ "$hp" -lt 95 ] && warn "Low InnoDB buffer pool hit rate (${hp}%)" || ok "InnoDB buffer pool hit rate (${hp}%)"
@@ -334,18 +334,34 @@ section "Security (basic)"
 [ "$LOCAL_INFILE" = "ON" ] && warn "local_infile is ON (consider OFF unless required)" || true
 [ "$REQUIRE_SECURE_TRANSPORT" = "OFF" ] && warn "require_secure_transport is OFF (consider ON if you require TLS)" || true
 
+section "Users (best-effort)"
 if [ -n "$USER_ROWS" ]; then
-  # Look for anonymous users and wildcards
+  info "mysql.user is readable; checking common issues (col4=$USER_COL4)"
+
   if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($1=="" && $2!=""){exit 0} END{exit 1}'; then
     warn "Anonymous user accounts exist in mysql.user"
   else
-    ok "No anonymous mysql.user rows detected (best-effort)"
+    ok "No anonymous mysql.user rows detected"
   fi
+
   if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($2=="%"){exit 0} END{exit 1}'; then
     warn "Accounts with host=% exist in mysql.user (review access)"
+  else
+    ok "No host=% mysql.user rows detected"
+  fi
+
+  if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($1=="root" && $2=="%"){exit 0} END{exit 1}'; then
+    warn "root@% exists (strongly consider restricting)"
+  fi
+
+  # Check for blank passwords/auth strings (best-effort)
+  if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($1!="" && $4==""){exit 0} END{exit 1}'; then
+    warn "User rows with empty $USER_COL4 detected (possible empty passwords)"
+  else
+    ok "No empty $USER_COL4 detected (best-effort)"
   fi
 else
-  info "mysql.user not readable with current credentials (skipping user security checks)"
+  info "mysql.user not readable with current credentials (skipping user checks)"
 fi
 
 ok "Collected: SHOW GLOBAL VARIABLES/STATUS"
