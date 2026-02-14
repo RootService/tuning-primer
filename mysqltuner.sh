@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.24.0-devel"
+VERSION="3.25.0-devel"
 
 usage() {
   cat <<USAGE
@@ -89,6 +89,8 @@ need_cmd head
 need_cmd printf
 need_cmd jq
 need_cmd sed
+need_cmd getconf
+need_cmd uname
 
 # ---- MySQL command builder -------------------------------------------------
 MYSQL_CMD="mysql"
@@ -787,6 +789,9 @@ fi
 
 # Memory estimate (best-effort)
 RAM_TOTAL=$(mem_total_bytes)
+ARCH_BITS=$(getconf LONG_BIT 2>/dev/null || echo 0)
+ARCH_MACHINE=$(uname -m 2>/dev/null || echo unknown)
+
 GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SIZE")" -v c="$(num "$QCACHE_SIZE")" -v d="$(num "$MAX_TMP_TABLE_SIZE")" -v e="$(num "$INNODB_LOG_BUFFER_SIZE")" 'BEGIN{printf "%d", a+b+c+d+e}')
 PER_THREAD_BUFFERS=$(awk -v a="$(num "$READ_BUFFER_SIZE")" -v b="$(num "$READ_RND_BUFFER_SIZE")" -v c="$(num "$SORT_BUFFER_SIZE")" -v d="$(num "$JOIN_BUFFER_SIZE")" -v e="$(num "$THREAD_STACK")" -v f="$(num "$BINLOG_CACHE_SIZE")" 'BEGIN{printf "%d", a+b+c+d+e+f}')
 MAX_MEM=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mc="$(num "$MAX_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mc)}')
@@ -1005,6 +1010,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg passwordfile "$PASSWORDFILE" \
     --arg max_password_checks "$MAX_PASSWORD_CHECKS" \
     --arg ram_total_bytes "$RAM_TOTAL" \
+    --arg arch_bits "$ARCH_BITS" \
+    --arg arch_machine "$ARCH_MACHINE" \
     --arg global_buffers_bytes "$GLOBAL_BUFFERS" \
     --arg max_tmp_table_size "$MAX_TMP_TABLE_SIZE" \
     --arg innodb_log_buffer_size "$INNODB_LOG_BUFFER_SIZE" \
@@ -1185,6 +1192,8 @@ if [ "$JSON" -eq 1 ]; then
       passwordfile:$passwordfile,
       max_password_checks:$max_password_checks,
       ram_total_bytes:$ram_total_bytes,
+      arch_bits:$arch_bits,
+      arch_machine:$arch_machine,
       global_buffers_bytes:$global_buffers_bytes,
       max_tmp_table_size:$max_tmp_table_size,
       innodb_log_buffer_size:$innodb_log_buffer_size,
@@ -1228,6 +1237,14 @@ echo "--------------------------------"
 
 # Uptime note (like upstream): <24h may skew recommendations
 [ "$(num "$UPTIME_S")" -lt 86400 ] && warn "MySQL was started within the last 24 hours: recommendations may be inaccurate" || true
+
+# Architecture check (like upstream)
+if [ "$(num "$ARCH_BITS")" -eq 32 ] && [ "$(num "$RAM_TOTAL")" -gt 2147483648 ]; then
+  warn "Switch to 64-bit OS - MySQL cannot currently use all of your RAM"
+elif [ "$(num "$ARCH_BITS")" -gt 0 ]; then
+  info "Operating on ${ARCH_BITS}-bit architecture ($ARCH_MACHINE)"
+fi
+
 info "Server version:  $SERVER_VERSION"
 info "Server flavor:   $SERVER_FLAVOR"
 [ -n "$SERVER_COMMENT" ] && info "Version comment: $SERVER_COMMENT"
