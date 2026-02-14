@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="0.9.0-devel"
+VERSION="1.0.0-devel"
 
 usage() {
   cat <<USAGE
@@ -20,6 +20,9 @@ Connection options:
   --user <user>
   --pass <pass>
   --defaults-file <path>   (passed to mysql client)
+
+Security/data options:
+  --cvefile <path>         (default: ./vulnerabilities.csv if present)
 
 Output options:
   --silent
@@ -50,6 +53,7 @@ cleanup() {
 
 # ---- Argument parsing (POSIX-compatible) -----------------------------------
 HOST=""; PORT=""; SOCKET=""; USER=""; PASS=""; DEFAULTS_FILE=""; SILENT=0; JSON=0
+CVEFILE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -61,6 +65,7 @@ while [ $# -gt 0 ]; do
     --user|-u) shift; USER="${1-}" ;;
     --pass|-p|--password) shift; PASS="${1-}" ;;
     --defaults-file) shift; DEFAULTS_FILE="${1-}" ;;
+    --cvefile) shift; CVEFILE="${1-}" ;;
     --silent) SILENT=1 ;;
     --json) JSON=1 ;;
     --) shift; break ;;
@@ -144,6 +149,61 @@ info()    { [ "$SILENT" -eq 1 ] && return 0; echo "[INFO] $*"; }
 warn()    { [ "$SILENT" -eq 1 ] && return 0; echo "[WARN] $*"; }
 ok()      { [ "$SILENT" -eq 1 ] && return 0; echo "[OK]   $*"; }
 
+# ---- Version parsing --------------------------------------------------------
+parse_semver3() {
+  # $1: version string -> prints "major minor micro"
+  v="$1"
+  # keep only leading numeric part with dots
+  v=$(printf "%s" "$v" | tr -cd '0123456789.' | awk -F. '{print $1"."$2"."$3}')
+  maj=$(printf "%s" "$v" | awk -F. '{print $1}')
+  min=$(printf "%s" "$v" | awk -F. '{print $2}')
+  mic=$(printf "%s" "$v" | awk -F. '{print $3}')
+  maj=$(num "$maj"); min=$(num "$min"); mic=$(num "$mic")
+  echo "$maj $min $mic"
+}
+
+# ---- CVE checks ------------------------------------------------------------
+check_cves() {
+  # Uses global: CVEFILE, MYSQL_VER_MAJ/MIN/MIC
+  [ -z "$CVEFILE" ] && return 0
+  [ ! -f "$CVEFILE" ] && return 0
+
+  cvefound=0
+  # shellcheck disable=SC2034
+  CVE_LIST_JSON="[]"
+
+  # Read semi-colon separated CSV
+  # Expected indexes (based on upstream):
+  # ...;major;minor;micro;cve_id;...;description
+  while IFS=';' read -r f0 f1 f2 f3 f4 f5 f6 rest; do
+    # skip empty/comment
+    [ -z "${f4:-}" ] && continue
+
+    maj=$(num "${f1:-0}")
+    min=$(num "${f2:-0}")
+    mic=$(num "${f3:-0}")
+
+    [ "$maj" -ne "$MYSQL_VER_MAJ" ] && continue
+    [ "$min" -ne "$MYSQL_VER_MIN" ] && continue
+
+    # If CVE affects <= version micro and our micro is <= that threshold
+    # Upstream logic: if (cve_micro >= mysql_micro) => affected
+    if [ "$mic" -ge "$MYSQL_VER_MIC" ]; then
+      cve_id="$f4"
+      desc="$f6"
+      cvefound=$((cvefound + 1))
+
+      if [ "$JSON" -eq 1 ]; then
+        CVE_LIST_JSON=$(printf '%s' "$CVE_LIST_JSON" | jq -c --arg id "$cve_id" --arg v "${maj}.${min}.${mic}" --arg d "$desc" '. + [{id:$id, affected_le:$v, desc:$d}]')
+      else
+        warn "$cve_id(<= ${maj}.${min}.${mic}): $desc"
+      fi
+    fi
+  done <"$CVEFILE"
+
+  CVE_FOUND="$cvefound"
+}
+
 # ---- Core collection -------------------------------------------------------
 WORKDIR="$(mktemp_dir)" || die "unable to create temp dir"
 trap cleanup EXIT HUP INT TERM
@@ -160,6 +220,14 @@ SERVER_VERSION=$(mysql_query_silent "SELECT VERSION();" | head -n 1 | tr -d '\r'
 SERVER_COMMENT=$(kv_get "$VARS_TSV" version_comment | tr -d '\r')
 SERVER_FLAVOR="mysql"
 case "$SERVER_VERSION" in *MariaDB*) SERVER_FLAVOR="mariadb" ;; esac
+
+# Default cvefile if not provided
+if [ -z "$CVEFILE" ] && [ -f ./vulnerabilities.csv ]; then
+  CVEFILE=./vulnerabilities.csv
+fi
+
+set -- $(parse_semver3 "$SERVER_VERSION")
+MYSQL_VER_MAJ="$1"; MYSQL_VER_MIN="$2"; MYSQL_VER_MIC="$3"
 
 UPTIME=$(kv_get "$STATUS_TSV" Uptime | tr -d '\r')
 UPTIME_S=$(num "$UPTIME")
@@ -226,13 +294,10 @@ GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SI
 PER_THREAD_BUFFERS=$(awk -v a="$(num "$READ_BUFFER_SIZE")" -v b="$(num "$READ_RND_BUFFER_SIZE")" -v c="$(num "$SORT_BUFFER_SIZE")" -v d="$(num "$JOIN_BUFFER_SIZE")" -v e="$(num "$THREAD_STACK")" 'BEGIN{printf "%d", a+b+c+d+e}')
 MAX_MEM=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mc="$(num "$MAX_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mc)}')
 
-# Try to read mysql.user (may fail if no privileges)
-USER_ROWS=$(mysql_query_silent "SELECT user,host,plugin,authentication_string FROM mysql.user" 2>/dev/null || true)
-USER_COL4="authentication_string"
-if [ -z "$USER_ROWS" ]; then
-  USER_ROWS=$(mysql_query_silent "SELECT user,host,plugin,password FROM mysql.user" 2>/dev/null || true)
-  USER_COL4="password"
-fi
+# Best-effort CVE scan
+CVE_FOUND=0
+CVE_LIST_JSON="[]"
+check_cves
 
 # ---- Output (JSON) ---------------------------------------------------------
 if [ "$JSON" -eq 1 ]; then
@@ -263,12 +328,12 @@ if [ "$JSON" -eq 1 ]; then
     --arg have_ssl "$HAVE_SSL" \
     --arg performance_schema "$PERFORMANCE_SCHEMA" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
-    --arg mysql_user_readable "$( [ -n "$USER_ROWS" ] && echo yes || echo no )" \
-    --arg mysql_user_col4 "$USER_COL4" \
     --arg ram_total_bytes "$RAM_TOTAL" \
     --arg global_buffers_bytes "$GLOBAL_BUFFERS" \
     --arg per_thread_buffers_bytes "$PER_THREAD_BUFFERS" \
     --arg max_memory_estimate_bytes "$MAX_MEM" \
+    --arg cve_found "$CVE_FOUND" \
+    --argjson cve_list "$CVE_LIST_JSON" \
     '{
       version:$version,
       flavor:$flavor,
@@ -296,12 +361,12 @@ if [ "$JSON" -eq 1 ]; then
       have_ssl:$have_ssl,
       performance_schema:$performance_schema,
       max_allowed_packet:$max_allowed_packet,
-      mysql_user_readable:$mysql_user_readable,
-      mysql_user_col4:$mysql_user_col4,
       ram_total_bytes:$ram_total_bytes,
       global_buffers_bytes:$global_buffers_bytes,
       per_thread_buffers_bytes:$per_thread_buffers_bytes,
-      max_memory_estimate_bytes:$max_memory_estimate_bytes
+      max_memory_estimate_bytes:$max_memory_estimate_bytes,
+      cve_found:$cve_found,
+      cve_list:$cve_list
     }'
   exit 0
 fi
@@ -315,6 +380,17 @@ info "Server version:  $SERVER_VERSION"
 info "Server flavor:   $SERVER_FLAVOR"
 [ -n "$SERVER_COMMENT" ] && info "Version comment: $SERVER_COMMENT"
 info "Uptime (s):      $UPTIME"
+
+section "CVE Security Recommendations"
+if [ -z "$CVEFILE" ]; then
+  info "Skipped: no --cvefile and ./vulnerabilities.csv not found"
+elif [ ! -f "$CVEFILE" ]; then
+  info "Skipped: CVE file not found ($CVEFILE)"
+elif [ "$CVE_FOUND" -eq 0 ]; then
+  ok "NO SECURITY CVE FOUND FOR YOUR VERSION"
+else
+  warn "$CVE_FOUND CVE(s) found for your MySQL release. Consider upgrading."
+fi
 
 section "Throughput"
 info "Questions: $QUESTIONS (QPS: $QPS)"
@@ -389,13 +465,9 @@ section "Network"
 if [ "$SKIP_NETWORKING" = "ON" ]; then
   ok "skip_networking is ON (TCP disabled)"
 else
-  case "$BIND_ADDRESS" in
-    0.0.0.0|::|*)
-      if [ "$BIND_ADDRESS" = "0.0.0.0" ] || [ "$BIND_ADDRESS" = "::" ]; then
-        warn "bind_address is $BIND_ADDRESS (listens on all interfaces)"
-      fi
-      ;;
-  esac
+  if [ "$BIND_ADDRESS" = "0.0.0.0" ] || [ "$BIND_ADDRESS" = "::" ]; then
+    warn "bind_address is $BIND_ADDRESS (listens on all interfaces)"
+  fi
 fi
 
 section "Security (basic)"
@@ -407,35 +479,6 @@ section "Security (basic)"
 
 [ "$LOCAL_INFILE" = "ON" ] && warn "local_infile is ON (consider OFF unless required)" || true
 [ "$REQUIRE_SECURE_TRANSPORT" = "OFF" ] && warn "require_secure_transport is OFF (consider ON if you require TLS)" || true
-
-section "Users (best-effort)"
-if [ -n "$USER_ROWS" ]; then
-  info "mysql.user readable; checking common issues (col4=$USER_COL4)"
-
-  if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($1=="" && $2!=""){exit 0} END{exit 1}'; then
-    warn "Anonymous user accounts exist"
-  else
-    ok "No anonymous user rows detected"
-  fi
-
-  if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($2=="%"){exit 0} END{exit 1}'; then
-    warn "Accounts with host=% exist"
-  else
-    ok "No host=% rows detected"
-  fi
-
-  if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($1=="root" && $2=="%"){exit 0} END{exit 1}'; then
-    warn "root@% exists"
-  fi
-
-  if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($1!="" && $4==""){exit 0} END{exit 1}'; then
-    warn "Empty $USER_COL4 detected (possible empty passwords)"
-  else
-    ok "No empty $USER_COL4 detected"
-  fi
-else
-  info "mysql.user not readable; skipping user checks"
-fi
 
 ok "Collected: SHOW GLOBAL VARIABLES/STATUS"
 warn "Next: implement full MySQLTuner-perl checks for feature parity."
