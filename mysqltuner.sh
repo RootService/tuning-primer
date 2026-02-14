@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.3.0-devel"
+VERSION="3.4.0-devel"
 
 usage() {
   cat <<USAGE
@@ -448,6 +448,7 @@ INNODB_BP_READS=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_reads)
 INNODB_FLUSH_LOG_AT_TRX=$(kv_get "$VARS_TSV" innodb_flush_log_at_trx_commit)
 INNODB_LOG_BUFFER_SIZE=$(kv_get "$VARS_TSV" innodb_log_buffer_size)
 INNODB_LOG_FILE_SIZE=$(kv_get "$VARS_TSV" innodb_log_file_size)
+INNODB_LOG_FILES_IN_GROUP=$(kv_get "$VARS_TSV" innodb_log_files_in_group)
 INNODB_REDO_LOG_CAPACITY=$(kv_get "$VARS_TSV" innodb_redo_log_capacity)
 INNODB_FILE_PER_TABLE=$(kv_get "$VARS_TSV" innodb_file_per_table)
 INNODB_FLUSH_METHOD=$(kv_get "$VARS_TSV" innodb_flush_method)
@@ -690,6 +691,26 @@ else
   INNODB_LOG_WRITE_EFF_PCT=""
 fi
 
+# InnoDB log size pct of buffer pool (best-effort)
+# For MySQL >= 8.0.30: prefer innodb_redo_log_capacity.
+# Otherwise: innodb_log_file_size * innodb_log_files_in_group.
+rbp=$(num "$INNODB_BP_SIZE")
+redo=$(num "$INNODB_REDO_LOG_CAPACITY")
+logfs=$(num "$INNODB_LOG_FILE_SIZE")
+logg=$(num "$INNODB_LOG_FILES_IN_GROUP")
+[ "$logg" -le 0 ] && logg=1
+if [ "$rbp" -gt 0 ]; then
+  if [ "$redo" -gt 0 ]; then
+    INNODB_LOG_SIZE_PCT=$(awk -v r="$redo" -v bp="$rbp" 'BEGIN{printf "%d", (r*100)/bp}')
+  elif [ "$logfs" -gt 0 ]; then
+    INNODB_LOG_SIZE_PCT=$(awk -v lf="$logfs" -v lg="$logg" -v bp="$rbp" 'BEGIN{printf "%d", (lf*lg*100)/bp}')
+  else
+    INNODB_LOG_SIZE_PCT=""
+  fi
+else
+  INNODB_LOG_SIZE_PCT=""
+fi
+
 # Memory estimate (best-effort)
 RAM_TOTAL=$(mem_total_bytes)
 GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SIZE")" -v c="$(num "$QCACHE_SIZE")" 'BEGIN{printf "%d", a+b+c}')
@@ -778,7 +799,9 @@ if [ "$JSON" -eq 1 ]; then
     --arg innodb_flush_log_at_trx_commit "$INNODB_FLUSH_LOG_AT_TRX" \
     --arg innodb_log_buffer_size "$INNODB_LOG_BUFFER_SIZE" \
     --arg innodb_log_file_size "$INNODB_LOG_FILE_SIZE" \
+    --arg innodb_log_files_in_group "$INNODB_LOG_FILES_IN_GROUP" \
     --arg innodb_redo_log_capacity "$INNODB_REDO_LOG_CAPACITY" \
+    --arg innodb_log_size_pct "${INNODB_LOG_SIZE_PCT:-}" \
     --arg innodb_file_per_table "$INNODB_FILE_PER_TABLE" \
     --arg innodb_flush_method "$INNODB_FLUSH_METHOD" \
     --arg innodb_log_waits "$INNODB_LOG_WAITS" \
@@ -927,7 +950,9 @@ if [ "$JSON" -eq 1 ]; then
       innodb_flush_log_at_trx_commit:$innodb_flush_log_at_trx_commit,
       innodb_log_buffer_size:$innodb_log_buffer_size,
       innodb_log_file_size:$innodb_log_file_size,
+      innodb_log_files_in_group:$innodb_log_files_in_group,
       innodb_redo_log_capacity:$innodb_redo_log_capacity,
+      innodb_log_size_pct:$innodb_log_size_pct,
       innodb_file_per_table:$innodb_file_per_table,
       innodb_flush_method:$innodb_flush_method,
       innodb_log_waits:$innodb_log_waits,
@@ -1273,6 +1298,14 @@ if [ "$(num "$INNODB_REDO_LOG_CAPACITY")" -gt 0 ]; then
   info "innodb_redo_log_capacity: $(bytes_h "$INNODB_REDO_LOG_CAPACITY")"
 elif [ "$(num "$INNODB_LOG_FILE_SIZE")" -gt 0 ]; then
   info "innodb_log_file_size: $(bytes_h "$INNODB_LOG_FILE_SIZE")"
+  [ "$(num "$INNODB_LOG_FILES_IN_GROUP")" -gt 0 ] && info "innodb_log_files_in_group: $INNODB_LOG_FILES_IN_GROUP" || true
+fi
+
+if [ -n "${INNODB_LOG_SIZE_PCT:-}" ]; then
+  info "InnoDB log size % of BP: ${INNODB_LOG_SIZE_PCT}%"
+  if [ "$(num "$INNODB_LOG_SIZE_PCT")" -lt 20 ] || [ "$(num "$INNODB_LOG_SIZE_PCT")" -gt 30 ]; then
+    warn "InnoDB log size ratio out of 20-30% range (${INNODB_LOG_SIZE_PCT}%)"
+  fi
 fi
 
 [ -n "$INNODB_LOG_WRITE_REQ" ] && info "Innodb_log_write_requests: $INNODB_LOG_WRITE_REQ"
