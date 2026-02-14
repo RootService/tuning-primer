@@ -231,8 +231,25 @@ mem_total_bytes() {
 # ---- Reporting helpers -----------------------------------------------------
 section() { [ "$SILENT" -eq 1 ] && return 0; echo; echo "== $* =="; }
 info()    { [ "$SILENT" -eq 1 ] && return 0; echo "[INFO] $*"; }
-warn()    { [ "$SILENT" -eq 1 ] && return 0; echo "[WARN] $*"; REC_WARN="${REC_WARN}${REC_WARN:+\n}$*"; }
-ok()      { [ "$SILENT" -eq 1 ] && return 0; echo "[OK]   $*"; REC_OK="${REC_OK}${REC_OK:+\n}$*"; }
+warn() {
+  [ "$SILENT" -eq 1 ] && return 0
+  echo "[WARN] $*"
+  if [ -n "${REC_WARN:-}" ]; then
+    REC_WARN=$(printf '%s\n%s' "$REC_WARN" "$*")
+  else
+    REC_WARN=$*
+  fi
+}
+
+ok() {
+  [ "$SILENT" -eq 1 ] && return 0
+  echo "[OK]   $*"
+  if [ -n "${REC_OK:-}" ]; then
+    REC_OK=$(printf '%s\n%s' "$REC_OK" "$*")
+  else
+    REC_OK=$*
+  fi
+}
 
 # ---- Version parsing --------------------------------------------------------
 parse_semver3() {
@@ -2044,10 +2061,9 @@ warn "Next: implement more MySQLTuner-perl checks for feature parity."
 
 mysqltuner_emit_json() {
   # Build recommendation arrays from accumulated warn/ok messages
-  # REC_WARN/REC_OK contain literal "\\n" sequences (because warn()/ok() append \\n).
-  # Convert those to real newlines first, then split.
-  RECOMMENDATIONS_JSON=$(printf '%s\n' "$REC_WARN" | awk 'NF{gsub(/\\\\n/,"\n"); print}' | jq -Rsc 'split("\n") | map(select(length>0))')
-  NOTES_JSON=$(printf '%s\n' "$REC_OK" | awk 'NF{gsub(/\\\\n/,"\n"); print}' | jq -Rsc 'split("\n") | map(select(length>0))')
+  # REC_WARN/REC_OK are stored as newline-separated text.
+  RECOMMENDATIONS_JSON=$(printf '%s\n' "$REC_WARN" | awk 'NF{print}' | jq -Rsc 'split("\n") | map(select(length>0))')
+  NOTES_JSON=$(printf '%s\n' "$REC_OK" | awk 'NF{print}' | jq -Rsc 'split("\n") | map(select(length>0))')
 
     jq -n \
     --arg version "$SERVER_VERSION" \
