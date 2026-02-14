@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="2.0.0-devel"
+VERSION="2.1.0-devel"
 
 usage() {
   cat <<USAGE
@@ -466,6 +466,10 @@ SORT_MERGE_PASSES=$(kv_get "$STATUS_TSV" Sort_merge_passes)
 SORT_RANGE=$(kv_get "$STATUS_TSV" Sort_range)
 SORT_ROWS=$(kv_get "$STATUS_TSV" Sort_rows)
 SORT_SCAN=$(kv_get "$STATUS_TSV" Sort_scan)
+
+SELECT_FULL_JOIN=$(kv_get "$STATUS_TSV" Select_full_join)
+SELECT_FULL_RANGE_JOIN=$(kv_get "$STATUS_TSV" Select_full_range_join)
+SELECT_RANGE_CHECK=$(kv_get "$STATUS_TSV" Select_range_check)
 QCACHE_SIZE=$(kv_get "$VARS_TSV" query_cache_size)
 QCACHE_TYPE=$(kv_get "$VARS_TSV" query_cache_type)
 QCACHE_LIMIT=$(kv_get "$VARS_TSV" query_cache_limit)
@@ -643,6 +647,9 @@ if [ "$JSON" -eq 1 ]; then
     --arg qcache_free_blocks "$QCACHE_FREE_BLOCKS" \
     --arg qcache_total_blocks "$QCACHE_TOTAL_BLOCKS" \
     --arg qcache_hit_pct "$QCACHE_HIT_PCT" \
+    --arg select_full_join "$SELECT_FULL_JOIN" \
+    --arg select_full_range_join "$SELECT_FULL_RANGE_JOIN" \
+    --arg select_range_check "$SELECT_RANGE_CHECK" \
     --arg mysql_user_readable "$MYSQL_USER_READABLE" \
     --arg mysql_user_col4 "$USER_COL4" \
     --arg passwordfile "$PASSWORDFILE" \
@@ -736,6 +743,9 @@ if [ "$JSON" -eq 1 ]; then
       qcache_free_blocks:$qcache_free_blocks,
       qcache_total_blocks:$qcache_total_blocks,
       qcache_hit_pct:$qcache_hit_pct,
+      select_full_join:$select_full_join,
+      select_full_range_join:$select_full_range_join,
+      select_range_check:$select_range_check,
       mysql_user_readable:$mysql_user_readable,
       mysql_user_col4:$mysql_user_col4,
       passwordfile:$passwordfile,
@@ -901,6 +911,13 @@ info "Sort_scan:         $SORT_SCAN"
 info "Sort_range:        $SORT_RANGE"
 info "Sort_rows:         $SORT_ROWS"
 [ "$(num "$SORT_MERGE_PASSES")" -gt 0 ] && warn "Sort_merge_passes > 0 (consider increasing sort_buffer_size or optimizing sorts)" || true
+
+section "Joins"
+info "Select_full_join:       $SELECT_FULL_JOIN"
+info "Select_full_range_join: $SELECT_FULL_RANGE_JOIN"
+info "Select_range_check:     $SELECT_RANGE_CHECK"
+[ "$(num "$SELECT_FULL_JOIN")" -gt 0 ] && warn "Select_full_join > 0 (joins without indexes detected)" || true
+[ "$(num "$SELECT_RANGE_CHECK")" -gt 0 ] && warn "Select_range_check > 0 (joins without keys in some cases)" || true
 
 section "Slow Query Log"
 [ -n "$SLOW_QUERY_LOG" ] && info "slow_query_log: $SLOW_QUERY_LOG"
