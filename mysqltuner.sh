@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="0.7.0-devel"
+VERSION="0.8.0-devel"
 
 usage() {
   cat <<USAGE
@@ -130,6 +130,15 @@ bytes_h() {
   echo "${b} B"
 }
 
+mem_total_bytes() {
+  # best-effort: Linux /proc/meminfo
+  if [ -r /proc/meminfo ]; then
+    awk '/^MemTotal:/{printf "%d", $2*1024; exit}' /proc/meminfo
+    return
+  fi
+  echo 0
+}
+
 # ---- Reporting helpers -----------------------------------------------------
 section() { [ "$SILENT" -eq 1 ] && return 0; echo; echo "== $* =="; }
 info()    { [ "$SILENT" -eq 1 ] && return 0; echo "[INFO] $*"; }
@@ -186,6 +195,15 @@ OPENED_TABLES=$(kv_get "$STATUS_TSV" Opened_tables)
 
 MAX_ALLOWED_PACKET=$(kv_get "$VARS_TSV" max_allowed_packet)
 
+# Memory-related vars (for rough estimates)
+KEY_BUFFER_SIZE=$(kv_get "$VARS_TSV" key_buffer_size)
+READ_BUFFER_SIZE=$(kv_get "$VARS_TSV" read_buffer_size)
+READ_RND_BUFFER_SIZE=$(kv_get "$VARS_TSV" read_rnd_buffer_size)
+SORT_BUFFER_SIZE=$(kv_get "$VARS_TSV" sort_buffer_size)
+JOIN_BUFFER_SIZE=$(kv_get "$VARS_TSV" join_buffer_size)
+THREAD_STACK=$(kv_get "$VARS_TSV" thread_stack)
+QCACHE_SIZE=$(kv_get "$VARS_TSV" query_cache_size)
+
 # Security-related variables
 SKIP_NAME_RESOLVE=$(kv_get "$VARS_TSV" skip_name_resolve)
 LOCAL_INFILE=$(kv_get "$VARS_TSV" local_infile)
@@ -197,6 +215,12 @@ PERFORMANCE_SCHEMA=$(kv_get "$VARS_TSV" performance_schema)
 QPS=$(rate_per_s "$QUESTIONS" "$UPTIME_S")
 ABORT_PCT=$(pct "$ABORTED_CONNECTS" "$CONNECTIONS")
 OPENED_TABLES_PS=$(rate_per_s "$OPENED_TABLES" "$UPTIME_S")
+
+# Memory estimate (best-effort)
+RAM_TOTAL=$(mem_total_bytes)
+GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SIZE")" -v c="$(num "$QCACHE_SIZE")" 'BEGIN{printf "%d", a+b+c}')
+PER_THREAD_BUFFERS=$(awk -v a="$(num "$READ_BUFFER_SIZE")" -v b="$(num "$READ_RND_BUFFER_SIZE")" -v c="$(num "$SORT_BUFFER_SIZE")" -v d="$(num "$JOIN_BUFFER_SIZE")" -v e="$(num "$THREAD_STACK")" 'BEGIN{printf "%d", a+b+c+d+e}')
+MAX_MEM=$(awk -v g="$GLOBAL_BUFFERS" -v p="$PER_THREAD_BUFFERS" -v mc="$(num "$MAX_CONNECTIONS")" 'BEGIN{printf "%d", g + (p*mc)}')
 
 # Try to read mysql.user (may fail if no privileges)
 USER_ROWS=$(mysql_query_silent "SELECT user,host,plugin,authentication_string FROM mysql.user" 2>/dev/null || true)
@@ -234,6 +258,10 @@ if [ "$JSON" -eq 1 ]; then
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg mysql_user_readable "$( [ -n "$USER_ROWS" ] && echo yes || echo no )" \
     --arg mysql_user_col4 "$USER_COL4" \
+    --arg ram_total_bytes "$RAM_TOTAL" \
+    --arg global_buffers_bytes "$GLOBAL_BUFFERS" \
+    --arg per_thread_buffers_bytes "$PER_THREAD_BUFFERS" \
+    --arg max_memory_estimate_bytes "$MAX_MEM" \
     '{
       version:$version,
       flavor:$flavor,
@@ -259,7 +287,11 @@ if [ "$JSON" -eq 1 ]; then
       performance_schema:$performance_schema,
       max_allowed_packet:$max_allowed_packet,
       mysql_user_readable:$mysql_user_readable,
-      mysql_user_col4:$mysql_user_col4
+      mysql_user_col4:$mysql_user_col4,
+      ram_total_bytes:$ram_total_bytes,
+      global_buffers_bytes:$global_buffers_bytes,
+      per_thread_buffers_bytes:$per_thread_buffers_bytes,
+      max_memory_estimate_bytes:$max_memory_estimate_bytes
     }'
   exit 0
 fi
@@ -285,6 +317,25 @@ info "Threads_running:      $THREADS_RUNNING"
 info "Threads_created:      $THREADS_CREATED"
 info "Aborted_connects:     $ABORTED_CONNECTS (${ABORT_PCT}%)"
 [ "$(num "$ABORTED_CONNECTS")" -gt 0 ] && [ "$ABORT_PCT" -ge 5 ] && warn "High aborted connect rate (${ABORT_PCT}%)"
+
+section "Memory"
+info "key_buffer_size:         $(bytes_h "$KEY_BUFFER_SIZE")"
+info "innodb_buffer_pool_size: $(bytes_h "$INNODB_BP_SIZE")"
+info "query_cache_size:        $(bytes_h "$QCACHE_SIZE")"
+info "Global buffers:          $(bytes_h "$GLOBAL_BUFFERS")"
+info "Per-thread buffers:      $(bytes_h "$PER_THREAD_BUFFERS")"
+info "Max memory estimate:     $(bytes_h "$MAX_MEM") (global + per-thread*max_connections)"
+if [ "$(num "$RAM_TOTAL")" -gt 0 ]; then
+  info "System RAM (best-effort): $(bytes_h "$RAM_TOTAL")"
+  mempct=$(pct "$MAX_MEM" "$RAM_TOTAL")
+  if [ "$mempct" -ge 85 ]; then
+    warn "Max memory estimate is high (${mempct}% of RAM). Consider lowering per-thread buffers/max_connections or increasing RAM."
+  else
+    ok "Max memory estimate: ${mempct}% of RAM"
+  fi
+else
+  info "System RAM unknown (no /proc/meminfo); skipping RAM comparison"
+fi
 
 section "Slow Query Log"
 [ -n "$SLOW_QUERY_LOG" ] && info "slow_query_log: $SLOW_QUERY_LOG"
@@ -354,7 +405,6 @@ if [ -n "$USER_ROWS" ]; then
     warn "root@% exists (strongly consider restricting)"
   fi
 
-  # Check for blank passwords/auth strings (best-effort)
   if printf "%s\n" "$USER_ROWS" | awk -F"\t" '($1!="" && $4==""){exit 0} END{exit 1}'; then
     warn "User rows with empty $USER_COL4 detected (possible empty passwords)"
   else
