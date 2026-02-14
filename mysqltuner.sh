@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.11.0-devel"
+VERSION="3.12.0-devel"
 
 usage() {
   cat <<USAGE
@@ -429,6 +429,10 @@ SLOW_QUERIES=$(kv_get "$STATUS_TSV" Slow_queries)
 
 QUESTIONS=$(kv_get "$STATUS_TSV" Questions)
 
+# Slow queries percent / per-day (best-effort)
+SLOW_QUERIES_PCT=$(pct "$SLOW_QUERIES" "$QUESTIONS")
+SLOW_QUERIES_PER_DAY=$(per_day "$SLOW_QUERIES" "$UPTIME_S")
+
 COM_SELECT=$(kv_get "$STATUS_TSV" Com_select)
 COM_INSERT=$(kv_get "$STATUS_TSV" Com_insert)
 COM_UPDATE=$(kv_get "$STATUS_TSV" Com_update)
@@ -837,6 +841,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg table_locks_immediate_pct "${TABLE_LOCKS_IMMEDIATE_PCT:-}" \
     --arg slow_query_log "$SLOW_QUERY_LOG" \
     --arg slow_queries "$SLOW_QUERIES" \
+    --arg slow_queries_pct "$SLOW_QUERIES_PCT" \
+    --arg slow_queries_per_day "$SLOW_QUERIES_PER_DAY" \
     --arg innodb_buffer_pool_size "$INNODB_BP_SIZE" \
     --arg innodb_buffer_pool_instances "$INNODB_BP_INSTANCES" \
     --arg innodb_buffer_pool_read_requests "$INNODB_BP_READ_REQ" \
@@ -1001,6 +1007,8 @@ if [ "$JSON" -eq 1 ]; then
       table_locks_immediate_pct:$table_locks_immediate_pct,
       slow_query_log:$slow_query_log,
       slow_queries:$slow_queries,
+      slow_queries_pct:$slow_queries_pct,
+      slow_queries_per_day:$slow_queries_per_day,
       innodb_buffer_pool_size:$innodb_buffer_pool_size,
       innodb_buffer_pool_instances:$innodb_buffer_pool_instances,
       innodb_buffer_pool_read_requests:$innodb_buffer_pool_read_requests,
@@ -1352,6 +1360,9 @@ section "Slow Query Log"
 [ -n "$SLOW_QUERY_LOG" ] && info "slow_query_log: $SLOW_QUERY_LOG"
 [ -n "$LONG_QUERY_TIME" ] && info "long_query_time: $LONG_QUERY_TIME"
 [ "$(num "$SLOW_QUERIES")" -gt 0 ] && warn "Slow_queries: $SLOW_QUERIES" || ok "Slow_queries: $SLOW_QUERIES"
+info "Slow queries %:   ${SLOW_QUERIES_PCT}%"
+info "Slow queries/day: $SLOW_QUERIES_PER_DAY"
+[ "$(num "$SLOW_QUERIES_PCT")" -ge 5 ] && warn "High slow query percentage (${SLOW_QUERIES_PCT}%)" || true
 
 section "Temporary Tables"
 info "Created_tmp_tables:      $CREATED_TMP_TABLES"
