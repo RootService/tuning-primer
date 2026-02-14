@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.48.4-devel"
+VERSION="3.49.1-devel"
 
 usage() {
   cat <<USAGE
@@ -695,7 +695,7 @@ DB_ENGINES_JSON=$(mysql_query_silent "SELECT DISTINCT engine FROM information_sc
 DB_ENGINES_COUNT=$(printf '%s' "$DB_ENGINES_JSON" | jq -r 'length')
 
 # Per-database breakdown (best-effort)
-DB_BREAKDOWN_JSON=$(mysql_query_silent "SELECT table_schema, IFNULL(SUM(table_rows),0) AS rows, IFNULL(SUM(data_length),0) AS data_bytes, IFNULL(SUM(index_length),0) AS index_bytes, IFNULL(SUM(data_length+index_length),0) AS total_bytes, COUNT(CASE WHEN table_type='BASE TABLE' THEN 1 END) AS tables, COUNT(CASE WHEN table_type='VIEW' THEN 1 END) AS views, COUNT(DISTINCT engine) AS engines, COUNT(DISTINCT table_collation) AS collations FROM information_schema.tables WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema ORDER BY total_bytes DESC;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], rows:(.[1]|tonumber), data_bytes:(.[2]|tonumber), index_bytes:(.[3]|tonumber), total_bytes:(.[4]|tonumber), tables:(.[5]|tonumber), views:(.[6]|tonumber), engines:(.[7]|tonumber), collations:(.[8]|tonumber)}]')
+DB_BREAKDOWN_JSON=$(mysql_query_silent "SELECT table_schema, IFNULL(SUM(table_rows),0), IFNULL(SUM(data_length),0), IFNULL(SUM(index_length),0), IFNULL(SUM(data_length+index_length),0), COUNT(CASE WHEN table_type='BASE TABLE' THEN 1 END), COUNT(CASE WHEN table_type='VIEW' THEN 1 END), COUNT(DISTINCT engine), COUNT(DISTINCT table_collation) FROM information_schema.tables WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema ORDER BY IFNULL(SUM(data_length+index_length),0) DESC;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], rows:(.[1]|tonumber), data_bytes:(.[2]|tonumber), index_bytes:(.[3]|tonumber), total_bytes:(.[4]|tonumber), tables:(.[5]|tonumber), views:(.[6]|tonumber), engines:(.[7]|tonumber), collations:(.[8]|tonumber)}]')
 DB_BREAKDOWN_COUNT=$(printf '%s' "$DB_BREAKDOWN_JSON" | jq -r 'length')
 
 # Largest tables (best-effort)
@@ -723,14 +723,23 @@ if [ "$TBSTAT" -eq 1 ] || [ -n "$SCHEMA_DIR" ]; then
   # table index listing (1 row per index)
   TABLE_IDX_RAW_JSON=$(mysql_query_silent "SELECT t.table_schema, t.table_name, t.engine, s.index_name, GROUP_CONCAT(s.column_name ORDER BY s.seq_in_index) AS cols, s.index_type, s.non_unique FROM information_schema.tables t LEFT JOIN information_schema.statistics s ON t.table_schema=s.table_schema AND t.table_name=s.table_name WHERE t.table_type='BASE TABLE' AND t.table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY t.table_schema, t.table_name, t.engine, s.index_name, s.index_type, s.non_unique ORDER BY t.table_schema, t.table_name, s.index_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2], index:.[3], cols:.[4], index_type:.[5], non_unique:.[6]}]')
 
+  # table stats summary (1 row per table)
+  TABLE_STAT_RAW_JSON=$(mysql_query_silent "SELECT table_schema, table_name, engine, row_format, IFNULL(table_rows,0), IFNULL(avg_row_length,0), IFNULL(data_length,0), IFNULL(index_length,0), IFNULL(data_length+index_length,0) AS total_bytes, CAST(IFNULL(data_free,0) AS SIGNED) AS data_free_bytes, IFNULL(table_collation,''), IFNULL(create_time,''), IFNULL(update_time,'') FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) ORDER BY table_schema, table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2], row_format:.[3], rows:(.[4]|tonumber), avg_row_length:(.[5]|tonumber), data_bytes:(.[6]|tonumber), index_bytes:(.[7]|tonumber), total_bytes:(.[8]|tonumber), data_free_bytes:(.[9]|tonumber), collation:.[10], create_time:.[11], update_time:.[12]}]')
+
   # table column summary (1 row per table)
   TABLE_COL_RAW_JSON=$(mysql_query_silent "SELECT table_schema, table_name, COUNT(*) AS columns, SUM(CASE WHEN is_nullable='YES' THEN 1 ELSE 0 END) AS nullable_columns, SUM(CASE WHEN data_type='json' THEN 1 ELSE 0 END) AS json_columns, SUM(CASE WHEN data_type IN ('text','tinytext','mediumtext','longtext') THEN 1 ELSE 0 END) AS text_columns, SUM(CASE WHEN data_type IN ('blob','tinyblob','mediumblob','longblob') THEN 1 ELSE 0 END) AS blob_columns, SUM(CASE WHEN column_key='PRI' THEN 1 ELSE 0 END) AS pk_columns, SUM(CASE WHEN extra LIKE '%auto_increment%' THEN 1 ELSE 0 END) AS auto_increment_columns, SUM(CASE WHEN data_type IN ('timestamp','datetime') THEN 1 ELSE 0 END) AS datetime_columns FROM information_schema.columns WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema, table_name ORDER BY table_schema, table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], columns:(.[2]|tonumber), nullable_columns:(.[3]|tonumber), json_columns:(.[4]|tonumber), text_columns:(.[5]|tonumber), blob_columns:(.[6]|tonumber), pk_columns:(.[7]|tonumber), auto_increment_columns:(.[8]|tonumber), datetime_columns:(.[9]|tonumber)}]')
 
   # merge into per-table objects
-  TABLE_METRICS_JSON=$(jq -n --argjson idx "$TABLE_IDX_RAW_JSON" --argjson col "$TABLE_COL_RAW_JSON" '
+  TABLE_METRICS_JSON=$(jq -n --argjson idx "$TABLE_IDX_RAW_JSON" --argjson col "$TABLE_COL_RAW_JSON" --argjson st "$TABLE_STAT_RAW_JSON" '
     ($idx | group_by(.schema,.table) | map({schema:.[0].schema, table:.[0].table, engine:.[0].engine, indexes:(map(select(.index!="" and .index!="NULL") | {name:.index, columns:(.cols|split(",")), type:.index_type, non_unique:((.non_unique|tonumber?)//0) }))})) as $t
     | ($col | map({key:(.schema+"\u0000"+.table), value:.}) | from_entries) as $cm
-    | $t | map(. + (($cm[(.schema+"\u0000"+.table)] // {}) | {columns, nullable_columns, json_columns, text_columns, blob_columns, pk_columns, auto_increment_columns, datetime_columns}))
+    | ($st  | map({key:(.schema+"\u0000"+.table), value:.}) | from_entries) as $sm
+    | $t
+    | map(
+        .
+        + (($cm[(.schema+"\u0000"+.table)] // {}) | {columns, nullable_columns, json_columns, text_columns, blob_columns, pk_columns, auto_increment_columns, datetime_columns})
+        + (($sm[(.schema+"\u0000"+.table)] // {}) | {row_format, rows, avg_row_length, data_bytes, index_bytes, total_bytes, data_free_bytes, collation, create_time, update_time})
+      )
   ')
 
   TABLE_METRICS_COUNT=$(printf '%s' "$TABLE_METRICS_JSON" | jq -r 'length')
@@ -828,6 +837,11 @@ if [ -n "$SCHEMA_DIR" ]; then
         [ -n "$NOW_STR" ] && printf 'Generated by mysqltuner.sh on %s\n\n' "$NOW_STR" || true
         printf '## Summary\n\n'
         printf '%s\n' "- Engine: $(printf '%s' "$t" | jq -r '.engine//""')"
+        printf '%s\n' "- Collation: $(printf '%s' "$t" | jq -r '.collation//""')"
+        printf '%s\n' "- Row format: $(printf '%s' "$t" | jq -r '.row_format//""')"
+        printf '%s\n' "- Rows (estimate): $(printf '%s' "$t" | jq -r '.rows//0')"
+        printf '%s\n' "- Total size: $(bytes_h "$(printf '%s' "$t" | jq -r '.total_bytes//0')")"
+        printf '%s\n' "- Data free: $(bytes_h "$(printf '%s' "$t" | jq -r '.data_free_bytes//0')")"
         printf '%s\n' "- Columns: $(printf '%s' "$t" | jq -r '.columns//0')"
         printf '%s\n' "- PK columns: $(printf '%s' "$t" | jq -r '.pk_columns//0')"
         printf '%s\n' "- AUTO_INCREMENT columns: $(printf '%s' "$t" | jq -r '.auto_increment_columns//0')"
@@ -897,6 +911,7 @@ if [ -n "$DUMP_DIR" ]; then
   # table_metrics.json (raw)
   if [ "$TBSTAT" -eq 1 ] || [ -n "$SCHEMA_DIR" ]; then
     printf '%s\n' "$TABLE_METRICS_JSON" >"$DUMP_DIR/table_metrics.json"
+    printf '%s' "$TABLE_METRICS_JSON" | dump_csv_file "$DUMP_DIR/table_metrics.csv" "Schema,Table,Engine,Collation,RowFormat,Rows,AvgRowLength,DataBytes,IndexBytes,TotalBytes,DataFreeBytes,Columns,PKColumns,AutoIncColumns,NullableColumns,DatetimeColumns,JSONColumns,TextColumns,BlobColumns" '.[] | [.schema,.table,(.engine//""),(.collation//""),(.row_format//""),(.rows|tostring),(.avg_row_length|tostring),(.data_bytes|tostring),(.index_bytes|tostring),(.total_bytes|tostring),(.data_free_bytes|tostring),(.columns|tostring),(.pk_columns|tostring),(.auto_increment_columns|tostring),(.nullable_columns|tostring),(.datetime_columns|tostring),(.json_columns|tostring),(.text_columns|tostring),(.blob_columns|tostring)] | @csv'
   fi
 
   # duplicate_indexes.csv
