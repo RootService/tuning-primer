@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.55.0-devel"
+VERSION="3.55.1-devel"
 
 usage() {
   cat <<USAGE
@@ -874,7 +874,7 @@ if [ -n "$SCHEMA_DIR" ]; then
       printf '### Tables\n\n'
       # list tables with engine and total size (respect ignore-tables)
       mysql_query_silent "SELECT table_name, engine, IFNULL(data_length+index_length,0) AS total_bytes FROM information_schema.tables WHERE table_schema='$db' AND table_type='BASE TABLE'""$(ignore_sql_tables)"" ORDER BY total_bytes DESC, table_name;" 2>/dev/null | \
-        jq -Rn '[inputs | select(length>0) | split("\t") | {table:.[0], engine:.[1], total_bytes:(.[2]|tonumber)}] | .[] | "- **" + .table + "** (" + (.engine//"") + ") total=" + (.total_bytes|tostring)'
+        jq -Rnr '[inputs | select(length>0) | split("\t") | {table:.[0], engine:.[1], total_bytes:(.[2]|tonumber)}] | .[] | "- **" + .table + "** (" + (.engine//"") + ") total=" + (.total_bytes|tostring)'
 
       printf '\n### Foreign Keys\n\n'
       printf '%s' "$FK_RELS_JSON" | jq -r --arg db "$db" '.[] | select(.schema==$db) | "- " + .table + " -> " + .ref_table'
@@ -886,8 +886,8 @@ if [ -n "$SCHEMA_DIR" ]; then
       tb=$(printf '%s' "$t" | jq -r '.table')
       [ -z "$tb" ] && continue
       {
-        printf '### Table: %s\n' "$tb"
-        printf '- **Engine**: %s\n\n' "$(printf '%s' "$t" | jq -r '.engine//""')"
+        printf '%s\n' "### Table: $tb"
+        printf '%s\n\n' "- **Engine**: $(printf '%s' "$t" | jq -r '.engine//""')"
 
         printf '#### Indexes\n\n'
         printf '%s' "$t" | jq -r '.indexes[]? | "- **" + .name + "**: " + (.columns|join(",")) + " (" + (.type//"") + ")" + (if (.non_unique|tonumber)==0 then " UNIQUE" else "" end)'
@@ -897,7 +897,7 @@ if [ -n "$SCHEMA_DIR" ]; then
 
         printf '\n#### Columns\n\n'
         mysql_query_silent "SELECT column_name, column_type, is_nullable FROM information_schema.columns WHERE table_schema='$db' AND table_name='$tb' ORDER BY ordinal_position;" 2>/dev/null | \
-          jq -Rn '[inputs | select(length>0) | split("\t") | {name:.[0], type:.[1], nullable:.[2]}] | .[] | "- **" + .name + "**: " + (.type|ascii_upcase) + (if .nullable=="NO" then " NOT NULL" else " NULL" end)'
+          jq -Rnr '[inputs | select(length>0) | split("\t") | {name:.[0], type:.[1], nullable:.[2]}] | .[] | "- **" + .name + "**: " + (.type|ascii_upcase) + (if .nullable=="NO" then " NOT NULL" else " NULL" end)'
 
         printf '\n---\n\n'
       } | write_text_file "$SCHEMA_DIR/databases/$db/$tb.md"
