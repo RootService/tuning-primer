@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.16.0-devel"
+VERSION="3.17.0-devel"
 
 usage() {
   cat <<USAGE
@@ -556,6 +556,14 @@ SYNC_BINLOG=$(kv_get "$VARS_TSV" sync_binlog)
 BINLOG_CACHE_SIZE=$(kv_get "$VARS_TSV" binlog_cache_size)
 MAX_CONNECT_ERRORS=$(kv_get "$VARS_TSV" max_connect_errors)
 
+# Thread pool (best-effort)
+THREAD_HANDLING=$(kv_get "$VARS_TSV" thread_handling)
+HAVE_THREADPOOL=no
+case "$THREAD_HANDLING" in
+  pool-of-threads|loaded-dynamically) HAVE_THREADPOOL=yes ;;
+  *) HAVE_THREADPOOL=no ;;
+ esac
+
 # Security-related variables
 SKIP_NAME_RESOLVE=$(kv_get "$VARS_TSV" skip_name_resolve)
 LOCAL_INFILE=$(kv_get "$VARS_TSV" local_infile)
@@ -897,6 +905,8 @@ if [ "$JSON" -eq 1 ]; then
     --arg binlog_cache_disk_use "$BINLOG_CACHE_DISK_USE" \
     --arg binlog_cache_pct "${BINLOG_CACHE_PCT:-}" \
     --arg max_connect_errors "$MAX_CONNECT_ERRORS" \
+    --arg thread_handling "$THREAD_HANDLING" \
+    --arg have_threadpool "$HAVE_THREADPOOL" \
     --arg skip_name_resolve "$SKIP_NAME_RESOLVE" \
     --arg local_infile "$LOCAL_INFILE" \
     --arg require_secure_transport "$REQUIRE_SECURE_TRANSPORT" \
@@ -1066,6 +1076,8 @@ if [ "$JSON" -eq 1 ]; then
       binlog_cache_disk_use:$binlog_cache_disk_use,
       binlog_cache_pct:$binlog_cache_pct,
       max_connect_errors:$max_connect_errors,
+      thread_handling:$thread_handling,
+      have_threadpool:$have_threadpool,
       skip_name_resolve:$skip_name_resolve,
       local_infile:$local_infile,
       require_secure_transport:$require_secure_transport,
@@ -1242,9 +1254,16 @@ info "Threads_connected:    $THREADS_CONNECTED"
 info "Threads_running:      $THREADS_RUNNING"
 info "Threads_created:      $THREADS_CREATED"
 info "thread_cache_size:    $THREAD_CACHE_SIZE"
-if [ -n "${THREAD_CACHE_HIT_PCT:-}" ]; then
-  info "Thread cache hit rate: ${THREAD_CACHE_HIT_PCT}%"
-  [ "$(num "$THREAD_CACHE_SIZE")" -gt 0 ] && [ "$THREAD_CACHE_HIT_PCT" -lt 90 ] && warn "Low thread cache hit rate (${THREAD_CACHE_HIT_PCT}%)" || true
+if [ "$HAVE_THREADPOOL" = "yes" ]; then
+  info "Thread cache not used with thread pool enabled"
+else
+  if [ "$(num "$THREAD_CACHE_SIZE")" -eq 0 ]; then
+    warn "Thread cache is disabled (consider setting to 4 as a starting value)"
+  fi
+  if [ -n "${THREAD_CACHE_HIT_PCT:-}" ]; then
+    info "Thread cache hit rate: ${THREAD_CACHE_HIT_PCT}%"
+    [ "$(num "$THREAD_CACHE_SIZE")" -gt 0 ] && [ "$THREAD_CACHE_HIT_PCT" -le 50 ] && warn "Low thread cache hit rate (${THREAD_CACHE_HIT_PCT}%)" || true
+  fi
 fi
 info "Aborted_connects:     $ABORTED_CONNECTS (${ABORT_PCT}%)"
 [ "$(num "$ABORTED_CONNECTS")" -gt 0 ] && [ "$ABORT_PCT" -ge 5 ] && warn "High aborted connect rate (${ABORT_PCT}%)"
