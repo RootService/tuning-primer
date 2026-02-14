@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.36.1-devel"
+VERSION="3.37.0-devel"
 
 usage() {
   cat <<USAGE
@@ -55,7 +55,7 @@ cleanup() {
 }
 
 # ---- Argument parsing (POSIX-compatible) -----------------------------------
-HOST=""; PORT=""; SOCKET=""; USER=""; PASS=""; DEFAULTS_FILE=""; SILENT=0; JSON=0; DUMP_DIR=""
+HOST=""; PORT=""; SOCKET=""; USER=""; PASS=""; DEFAULTS_FILE=""; SILENT=0; JSON=0; DUMP_DIR=""; REC_WARN=""; REC_OK=""
 CVEFILE=""
 PASSWORDFILE=""
 MAX_PASSWORD_CHECKS=500
@@ -183,8 +183,8 @@ mem_total_bytes() {
 # ---- Reporting helpers -----------------------------------------------------
 section() { [ "$SILENT" -eq 1 ] && return 0; echo; echo "== $* =="; }
 info()    { [ "$SILENT" -eq 1 ] && return 0; echo "[INFO] $*"; }
-warn()    { [ "$SILENT" -eq 1 ] && return 0; echo "[WARN] $*"; }
-ok()      { [ "$SILENT" -eq 1 ] && return 0; echo "[OK]   $*"; }
+warn()    { [ "$SILENT" -eq 1 ] && return 0; echo "[WARN] $*"; REC_WARN="${REC_WARN}${REC_WARN:+\n}$*"; }
+ok()      { [ "$SILENT" -eq 1 ] && return 0; echo "[OK]   $*"; REC_OK="${REC_OK}${REC_OK:+\n}$*"; }
 
 # ---- Version parsing --------------------------------------------------------
 parse_semver3() {
@@ -997,10 +997,18 @@ fi
 check_replication
 
 # ---- Output (JSON) ---------------------------------------------------------
+# Build recommendation arrays from accumulated warn/ok messages
+RECOMMENDATIONS_JSON=$(printf '%s
+' "$REC_WARN" | awk 'NF{print}' | jq -Rsc 'split("\n") | map(select(length>0))')
+NOTES_JSON=$(printf '%s
+' "$REC_OK" | awk 'NF{print}' | jq -Rsc 'split("\n") | map(select(length>0))')
+
 if [ "$JSON" -eq 1 ]; then
   jq -n \
     --arg version "$SERVER_VERSION" \
     --arg flavor "$SERVER_FLAVOR" \
+    --argjson recommendations "$RECOMMENDATIONS_JSON" \
+    --argjson notes "$NOTES_JSON" \
     --arg version_comment "$SERVER_COMMENT" \
     --arg uptime "$UPTIME" \
     --arg qps "$QPS" \
@@ -1220,6 +1228,8 @@ if [ "$JSON" -eq 1 ]; then
     '{
       version:$version,
       flavor:$flavor,
+      recommendations:$recommendations,
+      notes:$notes,
       version_comment:$version_comment,
       uptime:$uptime,
       qps:$qps,
