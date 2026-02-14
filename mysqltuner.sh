@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.48.3-devel"
+VERSION="3.48.4-devel"
 
 usage() {
   cat <<USAGE
@@ -729,7 +729,7 @@ if [ "$TBSTAT" -eq 1 ] || [ -n "$SCHEMA_DIR" ]; then
   # merge into per-table objects
   TABLE_METRICS_JSON=$(jq -n --argjson idx "$TABLE_IDX_RAW_JSON" --argjson col "$TABLE_COL_RAW_JSON" '
     ($idx | group_by(.schema,.table) | map({schema:.[0].schema, table:.[0].table, engine:.[0].engine, indexes:(map(select(.index!="" and .index!="NULL") | {name:.index, columns:(.cols|split(",")), type:.index_type, non_unique:((.non_unique|tonumber?)//0) }))})) as $t
-    | ($col | map({key:(.schema+"\u0000"+.table), v:.}) | from_entries) as $cm
+    | ($col | map({key:(.schema+"\u0000"+.table), value:.}) | from_entries) as $cm
     | $t | map(. + (($cm[(.schema+"\u0000"+.table)] // {}) | {columns, nullable_columns, json_columns, text_columns, blob_columns, pk_columns, auto_increment_columns, datetime_columns}))
   ')
 
