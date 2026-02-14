@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.40.0-devel"
+VERSION="3.41.0-devel"
 
 usage() {
   cat <<USAGE
@@ -658,6 +658,16 @@ LARGEST_TABLES_COUNT=$(printf '%s' "$LARGEST_TABLES_JSON" | jq -r 'length')
 DB_INDEX_BREAKDOWN_JSON=$(mysql_query_silent "SELECT table_schema, COUNT(DISTINCT CONCAT(table_name, index_name)) AS indexes FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys') GROUP BY table_schema ORDER BY indexes DESC;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], indexes:(.[1]|tonumber)}]')
 DB_INDEX_BREAKDOWN_COUNT=$(printf '%s' "$DB_INDEX_BREAKDOWN_JSON" | jq -r 'length')
 
+# Views / routines / triggers inventory (best-effort)
+VIEWS_JSON=$(mysql_query_silent "SELECT table_schema, table_name FROM information_schema.views WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY table_schema, table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], view:.[1]}]')
+VIEWS_COUNT=$(printf '%s' "$VIEWS_JSON" | jq -r 'length')
+
+ROUTINES_JSON=$(mysql_query_silent "SELECT routine_schema, routine_name, routine_type, security_type, definer FROM information_schema.routines WHERE routine_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY routine_schema, routine_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], routine:.[1], type:.[2], security_type:.[3], definer:.[4]}]')
+ROUTINES_COUNT=$(printf '%s' "$ROUTINES_JSON" | jq -r 'length')
+
+TRIGGERS_JSON=$(mysql_query_silent "SELECT trigger_schema, trigger_name, event_object_table, event_manipulation, action_timing, definer FROM information_schema.triggers WHERE trigger_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY trigger_schema, trigger_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], trigger:.[1], table:.[2], event:.[3], timing:.[4], definer:.[5]}]')
+TRIGGERS_COUNT=$(printf '%s' "$TRIGGERS_JSON" | jq -r 'length')
+
 # Optional: write upstream-style CSV dumps
 if [ -n "$DUMP_DIR" ]; then
   mkdir -p "$DUMP_DIR" 2>/dev/null || true
@@ -693,6 +703,15 @@ if [ -n "$DUMP_DIR" ]; then
 
   # largest_tables.csv
   printf '%s' "$LARGEST_TABLES_JSON" | dump_csv_file "$DUMP_DIR/largest_tables.csv" "Schema,Table,Engine,Rows,DataBytes,IndexBytes,TotalBytes,DataFreeBytes" '.[] | [.schema,.table,(.engine//""),.rows,.data_bytes,.index_bytes,.total_bytes,.data_free_bytes] | @csv'
+
+  # views.csv
+  printf '%s' "$VIEWS_JSON" | dump_csv_file "$DUMP_DIR/views.csv" "Schema,View" '.[] | [.schema,.view] | @csv'
+
+  # routines.csv
+  printf '%s' "$ROUTINES_JSON" | dump_csv_file "$DUMP_DIR/routines.csv" "Schema,Routine,Type,SecurityType,Definer" '.[] | [.schema,.routine,.type,(.security_type//""),(.definer//"")] | @csv'
+
+  # triggers.csv
+  printf '%s' "$TRIGGERS_JSON" | dump_csv_file "$DUMP_DIR/triggers.csv" "Schema,Trigger,Table,Event,Timing,Definer" '.[] | [.schema,.trigger,.table,.event,.timing,(.definer//"")] | @csv'
 fi
 
 PK_NAMING_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(.column != "id" and .column != (.table + "_id")) | {schema, table, column}]')
@@ -1232,6 +1251,12 @@ if [ "$JSON" -eq 1 ]; then
     --argjson db_index_breakdown "$DB_INDEX_BREAKDOWN_JSON" \
     --arg largest_tables_count "$LARGEST_TABLES_COUNT" \
     --argjson largest_tables "$LARGEST_TABLES_JSON" \
+    --arg views_count "$VIEWS_COUNT" \
+    --argjson views "$VIEWS_JSON" \
+    --arg routines_count "$ROUTINES_COUNT" \
+    --argjson routines "$ROUTINES_JSON" \
+    --arg triggers_count "$TRIGGERS_COUNT" \
+    --argjson triggers "$TRIGGERS_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1478,6 +1503,12 @@ if [ "$JSON" -eq 1 ]; then
       db_index_breakdown:$db_index_breakdown,
       largest_tables_count:$largest_tables_count,
       largest_tables:$largest_tables,
+      views_count:$views_count,
+      views:$views,
+      routines_count:$routines_count,
+      routines:$routines,
+      triggers_count:$triggers_count,
+      triggers:$triggers,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1717,6 +1748,14 @@ info "Largest tables (top 20): $LARGEST_TABLES_COUNT"
 if [ "$(num "$LARGEST_TABLES_COUNT")" -gt 0 ]; then
   printf '%s' "$LARGEST_TABLES_JSON" | jq -r '.[:10][] | "[INFO] Table " + .schema + "." + .table + " engine=" + (.engine//"") + " rows=" + (.rows|tostring) + " total=" + (.total_bytes|tostring)'
 fi
+
+section "Views / Routines / Triggers"
+info "Views: $VIEWS_COUNT"
+[ "$(num "$VIEWS_COUNT")" -gt 0 ] && printf '%s' "$VIEWS_JSON" | jq -r '.[:10][] | "[INFO] View " + .schema + "." + .view' || true
+info "Routines: $ROUTINES_COUNT"
+[ "$(num "$ROUTINES_COUNT")" -gt 0 ] && printf '%s' "$ROUTINES_JSON" | jq -r '.[:10][] | "[INFO] Routine " + .schema + "." + .routine + " type=" + .type' || true
+info "Triggers: $TRIGGERS_COUNT"
+[ "$(num "$TRIGGERS_COUNT")" -gt 0 ] && printf '%s' "$TRIGGERS_JSON" | jq -r '.[:10][] | "[INFO] Trigger " + .schema + "." + .trigger + " on " + .table + " " + .timing + " " + .event' || true
 
 section "Replication"
 info "Galera Synchronous replication: $HAVE_GALERA"
