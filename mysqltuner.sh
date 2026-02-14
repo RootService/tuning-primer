@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.58.0-devel"
+VERSION="3.59.0-devel"
 
 usage() {
   cat <<USAGE
@@ -887,7 +887,24 @@ if [ -n "$SCHEMA_DIR" ]; then
       [ -z "$tb" ] && continue
       {
         printf '%s\n' "### Table: $tb"
-        printf '%s\n\n' "- **Engine**: $(printf '%s' "$t" | jq -r '.engine//""')"
+        engine=$(printf '%s' "$t" | jq -r '.engine//""')
+        rowfmt=$(printf '%s' "$t" | jq -r '.row_format//""')
+        coll=$(printf '%s' "$t" | jq -r '.collation//""')
+        totalb=$(printf '%s' "$t" | jq -r '.total_bytes//0')
+        freeb=$(printf '%s' "$t" | jq -r '.data_free_bytes//0')
+
+        printf '%s\n' "- **Engine**: $engine"
+        [ -n "$coll" ] && printf '%s\n' "- **Collation**: $coll" || true
+        [ -n "$rowfmt" ] && printf '%s\n' "- **Row format**: $rowfmt" || true
+        printf '%s\n' "- **Total size**: $(bytes_h "$totalb")"
+        printf '%s\n\n' "- **Data free**: $(bytes_h "$freeb")"
+
+        # Table metadata (comment/create_options)
+        tmeta=$(mysql_query_silent "SELECT table_comment, create_options FROM information_schema.tables WHERE table_schema='$db' AND table_name='$tb' LIMIT 1;" 2>/dev/null | head -n 1)
+        tcomment=$(printf '%s' "$tmeta" | awk -F"\t" '{print $1}')
+        tcreate=$(printf '%s' "$tmeta" | awk -F"\t" '{print $2}')
+        [ -n "$tcomment" ] && [ "$tcomment" != "" ] && printf '%s\n' "- **Comment**: $tcomment" || true
+        [ -n "$tcreate" ] && [ "$tcreate" != "" ] && printf '%s\n\n' "- **Create options**: $tcreate" || true
 
         printf '#### Indexes\n\n'
         printf '%s' "$t" | jq -r '.indexes[]? | "- **" + .name + "**: " + (.columns|join(",")) + " (" + (.type//"") + ")" + (if (.non_unique|tonumber)==0 then " UNIQUE" else "" end)'
