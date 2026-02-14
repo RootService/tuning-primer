@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.15.0-devel"
+VERSION="3.16.0-devel"
 
 usage() {
   cat <<USAGE
@@ -1429,6 +1429,13 @@ if [ -n "${INNODB_BP_DATA_PCT:-}" ]; then
   [ "$(num "$INNODB_BP_DATA_PCT")" -lt 100 ] && warn "InnoDB buffer pool is smaller than InnoDB data+index size" || true
 fi
 [ -n "$INNODB_BP_INSTANCES" ] && info "innodb_buffer_pool_instances: $INNODB_BP_INSTANCES"
+# Upstream hint: if BP <= 1GiB then instances should be 1
+ibp=$(num "$INNODB_BP_SIZE")
+inst=$(num "$INNODB_BP_INSTANCES")
+if [ "$ibp" -gt 0 ] && [ "$ibp" -le 1073741824 ] && [ "$inst" -ne 1 ]; then
+  warn "InnoDB buffer pool <= 1GiB and innodb_buffer_pool_instances != 1"
+fi
+
 [ -n "$INNODB_BP_CHUNK_SIZE" ] && info "innodb_buffer_pool_chunk_size: $(bytes_h "$INNODB_BP_CHUNK_SIZE")"
 if [ -n "${INNODB_BP_CHUNK_ALIGNED:-}" ]; then
   [ "$INNODB_BP_CHUNK_ALIGNED" = "yes" ] && ok "innodb_buffer_pool_size aligned with chunk_size * instances" || warn "innodb_buffer_pool_size not aligned with chunk_size * instances"
