@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.49.1-devel"
+VERSION="3.50.0-devel"
 
 usage() {
   cat <<USAGE
@@ -685,13 +685,13 @@ DB_DATA_BYTES=$(printf '%s' "$DB_SUMMARY_TSV" | awk -F"\t" '{print $2}')
 DB_INDEX_BYTES=$(printf '%s' "$DB_SUMMARY_TSV" | awk -F"\t" '{print $3}')
 DB_TOTAL_BYTES=$(printf '%s' "$DB_SUMMARY_TSV" | awk -F"\t" '{print $4}')
 
-DB_CHARSETS_JSON=$(mysql_query_silent "SELECT DISTINCT character_set_name FROM information_schema.columns WHERE character_set_name IS NOT NULL AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY character_set_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | .]')
+DB_CHARSETS_JSON=$(mysql_query_silent "SELECT DISTINCT character_set_name FROM information_schema.columns WHERE character_set_name IS NOT NULL AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) ORDER BY character_set_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | .]')
 DB_CHARSETS_COUNT=$(printf '%s' "$DB_CHARSETS_JSON" | jq -r 'length')
 
-DB_COLLATIONS_JSON=$(mysql_query_silent "SELECT DISTINCT table_collation FROM information_schema.tables WHERE table_collation IS NOT NULL AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY table_collation;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | .]')
+DB_COLLATIONS_JSON=$(mysql_query_silent "SELECT DISTINCT table_collation FROM information_schema.tables WHERE table_collation IS NOT NULL AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) ORDER BY table_collation;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | .]')
 DB_COLLATIONS_COUNT=$(printf '%s' "$DB_COLLATIONS_JSON" | jq -r 'length')
 
-DB_ENGINES_JSON=$(mysql_query_silent "SELECT DISTINCT engine FROM information_schema.tables WHERE engine IS NOT NULL AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY engine;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | .]')
+DB_ENGINES_JSON=$(mysql_query_silent "SELECT DISTINCT engine FROM information_schema.tables WHERE engine IS NOT NULL AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) ORDER BY engine;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | .]')
 DB_ENGINES_COUNT=$(printf '%s' "$DB_ENGINES_JSON" | jq -r 'length')
 
 # Per-database breakdown (best-effort)
@@ -707,13 +707,13 @@ DB_INDEX_BREAKDOWN_JSON=$(mysql_query_silent "SELECT table_schema, COUNT(DISTINC
 DB_INDEX_BREAKDOWN_COUNT=$(printf '%s' "$DB_INDEX_BREAKDOWN_JSON" | jq -r 'length')
 
 # Views / routines / triggers inventory (best-effort)
-VIEWS_JSON=$(mysql_query_silent "SELECT table_schema, table_name FROM information_schema.views WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY table_schema, table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], view:.[1]}]')
+VIEWS_JSON=$(mysql_query_silent "SELECT table_schema, table_name FROM information_schema.views WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs) ORDER BY table_schema, table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], view:.[1]}]')
 VIEWS_COUNT=$(printf '%s' "$VIEWS_JSON" | jq -r 'length')
 
-ROUTINES_JSON=$(mysql_query_silent "SELECT routine_schema, routine_name, routine_type, security_type, definer FROM information_schema.routines WHERE routine_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY routine_schema, routine_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], routine:.[1], type:.[2], security_type:.[3], definer:.[4]}]')
+ROUTINES_JSON=$(mysql_query_silent "SELECT routine_schema, routine_name, routine_type, security_type, definer FROM information_schema.routines WHERE routine_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs) ORDER BY routine_schema, routine_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], routine:.[1], type:.[2], security_type:.[3], definer:.[4]}]')
 ROUTINES_COUNT=$(printf '%s' "$ROUTINES_JSON" | jq -r 'length')
 
-TRIGGERS_JSON=$(mysql_query_silent "SELECT trigger_schema, trigger_name, event_object_table, event_manipulation, action_timing, definer FROM information_schema.triggers WHERE trigger_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY trigger_schema, trigger_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], trigger:.[1], table:.[2], event:.[3], timing:.[4], definer:.[5]}]')
+TRIGGERS_JSON=$(mysql_query_silent "SELECT trigger_schema, trigger_name, event_object_table, event_manipulation, action_timing, definer FROM information_schema.triggers WHERE trigger_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs) ORDER BY trigger_schema, trigger_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], trigger:.[1], table:.[2], event:.[3], timing:.[4], definer:.[5]}]')
 TRIGGERS_COUNT=$(printf '%s' "$TRIGGERS_JSON" | jq -r 'length')
 
 # mysql_tables (table metrics) - best-effort; gated by --tbstat
@@ -789,9 +789,9 @@ if [ -n "$SCHEMA_DIR" ]; then
   } | write_text_file "$SCHEMA_DIR/schema.md"
 
   # Mermaid ER diagram (with entities + PK cols, plus FK relationships)
-  SCHEMA_TABLES_JSON=$(mysql_query_silent "SELECT table_schema, table_name FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY table_schema, table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1]}]')
-  PK_COLS_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name FROM information_schema.columns WHERE column_key='PRI' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY table_schema, table_name, ordinal_position;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2]}]')
-  FK_RELS_JSON=$(mysql_query_silent "SELECT constraint_schema, table_name, referenced_table_name FROM information_schema.key_column_usage WHERE referenced_table_name IS NOT NULL AND constraint_schema NOT IN ('mysql','performance_schema','information_schema','sys') GROUP BY constraint_schema, table_name, referenced_table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], ref_table:.[2]}]')
+  SCHEMA_TABLES_JSON=$(mysql_query_silent "SELECT table_schema, table_name FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) ORDER BY table_schema, table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1]}]')
+  PK_COLS_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name FROM information_schema.columns WHERE column_key='PRI' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) ORDER BY table_schema, table_name, ordinal_position;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2]}]')
+  FK_RELS_JSON=$(mysql_query_silent "SELECT constraint_schema, table_name, referenced_table_name FROM information_schema.key_column_usage WHERE referenced_table_name IS NOT NULL AND constraint_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY constraint_schema, table_name, referenced_table_name;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], ref_table:.[2]}]')
 
   {
     printf '%s\n' 'erDiagram'
@@ -852,6 +852,10 @@ if [ -n "$SCHEMA_DIR" ]; then
         printf '%s\n\n' "- BLOB columns: $(printf '%s' "$t" | jq -r '.blob_columns//0')"
         printf '## Indexes\n\n'
         printf '%s' "$t" | jq -r '.indexes[]? | "- " + .name + " (" + (.type//"") + ") cols=" + (.columns|join(","))'
+
+        printf '\n## Columns\n\n'
+        mysql_query_silent "SELECT column_name, column_type, is_nullable, column_default, column_key, extra FROM information_schema.columns WHERE table_schema='$db' AND table_name='$tb' ORDER BY ordinal_position;" 2>/dev/null | \
+          jq -Rn '[inputs | select(length>0) | split("\t") | {name:.[0], type:.[1], nullable:.[2], default:.[3], key:.[4], extra:.[5]}] | .[] | "- " + .name + ": " + .type + " nullable=" + .nullable + (if (.key|length)>0 then (" key="+.key) else "" end) + (if (.extra|length)>0 then (" extra="+.extra) else "" end)'
       } | write_text_file "$SCHEMA_DIR/databases/$db/$tb.md"
     done
   done
