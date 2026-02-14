@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.26.1-devel"
+VERSION="3.27.0-devel"
 
 usage() {
   cat <<USAGE
@@ -516,6 +516,15 @@ INNODB_DATA_BYTES=$(mysql_query_silent "SELECT IFNULL(SUM(data_length+index_leng
 ENGINES_ENABLED_CSV=$(mysql_query_silent "SELECT ENGINE,SUPPORT FROM information_schema.ENGINES ORDER BY ENGINE;" | awk -F"\t" '($2=="YES"||$2=="DEFAULT"){print $1}' | tr '\n' ',' | sed 's/,$//')
 ENGINE_SIZES_JSON=$(mysql_query_silent "SELECT ENGINE, IFNULL(SUM(DATA_LENGTH+INDEX_LENGTH),0) AS total_bytes, COUNT(*) AS table_count, IFNULL(SUM(DATA_LENGTH),0) AS data_bytes, IFNULL(SUM(INDEX_LENGTH),0) AS index_bytes FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys') AND ENGINE IS NOT NULL GROUP BY ENGINE ORDER BY ENGINE;" | jq -Rn '[inputs | select(length>0) | split("\t") | {engine:.[0], total_bytes:(.[1]|tonumber), table_count:(.[2]|tonumber), data_bytes:(.[3]|tonumber), index_bytes:(.[4]|tonumber)}]')
 
+# Table hygiene (best-effort)
+# 1) fragmented tables: DATA_FREE ratio >10% and table >100MiB
+FRAGMENTED_TABLES_JSON=$(mysql_query_silent "SELECT TABLE_SCHEMA, TABLE_NAME, ENGINE, CAST(DATA_FREE AS SIGNED), (DATA_LENGTH+INDEX_LENGTH) AS used_bytes FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys') AND ENGINE IS NOT NULL AND ENGINE!='MEMORY' AND (DATA_LENGTH/1024/1024)>100 AND CAST(DATA_FREE AS SIGNED)*100/(DATA_LENGTH+INDEX_LENGTH+CAST(DATA_FREE AS SIGNED)) > 10 ORDER BY CAST(DATA_FREE AS SIGNED) DESC;" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2], data_free_bytes:(.[3]|tonumber), used_bytes:(.[4]|tonumber)}]')
+FRAGMENTED_TABLES_COUNT=$(printf '%s' "$FRAGMENTED_TABLES_JSON" | jq -r 'length')
+
+# 2) tables without any PRI/UNI key
+TABLES_NO_PK_JSON=$(mysql_query_silent "SELECT c.table_schema, c.table_name FROM information_schema.columns c JOIN information_schema.tables t USING (table_schema, table_name) WHERE c.table_schema NOT IN ('sys','mysql','information_schema','performance_schema') AND t.table_type='BASE TABLE' GROUP BY c.table_schema,c.table_name HAVING SUM(IF(c.column_key IN ('PRI','UNI'),1,0)) = 0;" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1]}]')
+TABLES_NO_PK_COUNT=$(printf '%s' "$TABLES_NO_PK_JSON" | jq -r 'length')
+
 # MyISAM / key buffer metrics
 KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
 KEY_READS=$(kv_get "$STATUS_TSV" Key_reads)
@@ -976,6 +985,10 @@ if [ "$JSON" -eq 1 ]; then
     --arg sys_schema_version "$SYS_SCHEMA_VERSION" \
     --arg engines_enabled_csv "$ENGINES_ENABLED_CSV" \
     --argjson engine_sizes "$ENGINE_SIZES_JSON" \
+    --arg fragmented_tables_count "$FRAGMENTED_TABLES_COUNT" \
+    --argjson fragmented_tables "$FRAGMENTED_TABLES_JSON" \
+    --arg tables_no_pk_count "$TABLES_NO_PK_COUNT" \
+    --argjson tables_no_pk "$TABLES_NO_PK_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1160,6 +1173,10 @@ if [ "$JSON" -eq 1 ]; then
       sys_schema_version:$sys_schema_version,
       engines_enabled_csv:$engines_enabled_csv,
       engine_sizes:$engine_sizes,
+      fragmented_tables_count:$fragmented_tables_count,
+      fragmented_tables:$fragmented_tables,
+      tables_no_pk_count:$tables_no_pk_count,
+      tables_no_pk:$tables_no_pk,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1270,6 +1287,17 @@ if printf '%s' "$ENGINE_SIZES_JSON" | jq -e . >/dev/null 2>&1; then
   else
     printf '%s' "$ENGINE_SIZES_JSON" | jq -r '.[] | "[INFO] " + .engine + ": " + (.total_bytes|tostring) + " bytes (tables=" + (.table_count|tostring) + ")"' | head -n 12
   fi
+fi
+
+section "Tables"
+info "Fragmented tables: $FRAGMENTED_TABLES_COUNT"
+if [ "$(num "$FRAGMENTED_TABLES_COUNT")" -gt 0 ]; then
+  # show top 10 by data_free
+  printf '%s' "$FRAGMENTED_TABLES_JSON" | jq -r '.[:10][] | "[WARN] Fragmented: " + .schema + "." + .table + " engine=" + .engine + " data_free=" + (.data_free_bytes|tostring) + " used=" + (.used_bytes|tostring)' 
+fi
+info "Tables without PRI/UNI key: $TABLES_NO_PK_COUNT"
+if [ "$(num "$TABLES_NO_PK_COUNT")" -gt 0 ]; then
+  printf '%s' "$TABLES_NO_PK_JSON" | jq -r '.[:10][] | "[WARN] No PK/UK: " + .schema + "." + .table'
 fi
 
 section "Replication"
