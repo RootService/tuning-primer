@@ -5,7 +5,7 @@
 # Keep strict mode, but avoid set -e (we want controlled error handling)
 set -u
 
-VERSION="0.1.0-devel"
+VERSION="0.1.1-devel"
 
 usage() {
   cat <<USAGE
@@ -39,13 +39,6 @@ USAGE
 die() {
   echo "ERROR: $*" 1>&2
   exit 1
-}
-
-note() {
-  # log to stderr unless silent
-  if [ "${SILENT:-0}" -eq 0 ]; then
-    echo "$*" 1>&2
-  fi
 }
 
 need_cmd() {
@@ -105,6 +98,8 @@ need_cmd awk
 need_cmd sed
 need_cmd tr
 need_cmd head
+need_cmd printf
+need_cmd jq
 
 # ---- MySQL command builder -------------------------------------------------
 MYSQL_CMD="mysql"
@@ -145,13 +140,13 @@ mysql_query_silent() {
 kv_get() {
   # $1: file (tab-separated key \t value)
   # $2: key
-  awk -F"\t" -v k="$2" '(==k){sub(/^[^\t]*\t/, ""); print; exit}' "$1"
+  awk -F"\t" -v k="$2" '($1==k){sub(/^[^\t]*\t/, ""); print; exit}' "$1"
 }
 
 kv_dump_file() {
   # $1: SQL that returns 2 columns (key, value)
   # $2: output file
-  mysql_query_silent "$1" | awk 'NF>=2{print "\t"}' >"$2"
+  mysql_query_silent "$1" | awk 'NF>=2{print $1"\t"$2}' >"$2"
 }
 
 # ---- Core collection -------------------------------------------------------
@@ -171,24 +166,24 @@ kv_dump_file "SHOW GLOBAL VARIABLES" "$VARS_TSV"
 kv_dump_file "SHOW GLOBAL STATUS" "$STATUS_TSV"
 
 # Basic server identity
-SERVER_VERSION="$(mysql_query_silent "SELECT VERSION();" | head -n 1 | tr -d '\r')"
-SERVER_COMMENT="$(kv_get "$VARS_TSV" version_comment | tr -d '\r')"
+SERVER_VERSION=$(mysql_query_silent "SELECT VERSION();" | head -n 1 | tr -d '\r')
+SERVER_COMMENT=$(kv_get "$VARS_TSV" version_comment | tr -d '\r')
 SERVER_FLAVOR="mysql"
 case "$SERVER_VERSION" in
   *MariaDB*) SERVER_FLAVOR="mariadb" ;;
 esac
 
-UPTIME="$(kv_get "$STATUS_TSV" Uptime | tr -d '\r')"
+UPTIME=$(kv_get "$STATUS_TSV" Uptime | tr -d '\r')
 
 # ---- Output ---------------------------------------------------------------
 if [ "$JSON" -eq 1 ]; then
-  # minimal JSON for now (avoid complex escaping until we add a proper encoder)
-  echo "{";
-  echo "  \"version\": \"$SERVER_VERSION\",";
-  echo "  \"flavor\": \"$SERVER_FLAVOR\",";
-  echo "  \"version_comment\": \"$SERVER_COMMENT\",";
-  echo "  \"uptime\": \"$UPTIME\"";
-  echo "}";
+  # Use jq for correct JSON string escaping
+  jq -n \
+    --arg version "$SERVER_VERSION" \
+    --arg flavor "$SERVER_FLAVOR" \
+    --arg version_comment "$SERVER_COMMENT" \
+    --arg uptime "$UPTIME" \
+    '{version:$version, flavor:$flavor, version_comment:$version_comment, uptime:$uptime}'
   exit 0
 fi
 
