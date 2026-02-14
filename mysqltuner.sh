@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="1.1.0-devel"
+VERSION="1.2.0-devel"
 
 usage() {
   cat <<USAGE
@@ -22,8 +22,8 @@ Connection options:
   --defaults-file <path>   (passed to mysql client)
 
 Security/data options:
-  --cvefile <path>         (default: ./vulnerabilities.csv if present)
-  --passwordfile <path>    (default: ./basic_passwords.txt if present; else /usr/share/mysqltuner/basic_passwords.txt)
+  --cvefile <path>           (default: ./vulnerabilities.csv if present)
+  --passwordfile <path>      (default: ./basic_passwords.txt if present; else /usr/share/mysqltuner/basic_passwords.txt)
   --max-password-checks <n>  (default: 500)
 
 Output options:
@@ -106,6 +106,12 @@ mysql_query() {
   echo "$1" | $MYSQL_CMD $MYSQL_ARGS
 }
 mysql_query_silent() { mysql_query "$1" 2>/dev/null; }
+
+# With column names (first row is header)
+mysql_query_table() {
+  # shellcheck disable=SC2086
+  echo "$1" | $MYSQL_CMD ${MYSQL_ARGS% --skip-column-names} 2>/dev/null
+}
 
 # ---- KV helpers ------------------------------------------------------------
 kv_get() { awk -F"\t" -v k="$2" '($1==k){sub(/^[^\t]*\t/, ""); print; exit}' "$1"; }
@@ -202,8 +208,6 @@ check_cves() {
 
 # ---- Weak password checks (MySQL < 8 only, best-effort) ---------------------
 check_weak_passwords_pre8() {
-  # Requires: mysql.user readable AND PASSWORD() function available.
-  # We only run this when major version < 8.
   WEAK_PASSWORD_HITS=0
   WEAK_PASSWORD_USERS_JSON="[]"
 
@@ -212,13 +216,9 @@ check_weak_passwords_pre8() {
   [ "$MYSQL_VER_MAJ" -ge 8 ] && return 0
   [ "${MYSQL_USER_READABLE:-no}" != "yes" ] && return 0
 
-  # Determine password column name for hashing comparison
   PASS_COL="$USER_COL4"
-  # In some installs plugin column may exist but password column differs.
-  # We'll assume col4 is the hash column (authentication_string or password).
 
   n=0
-  # Read password list; strip CR and whitespace; skip empties.
   while IFS= read -r line; do
     p=$(printf "%s" "$line" | tr -d '\r' | tr -d ' \t')
     [ -z "$p" ] && continue
@@ -226,17 +226,14 @@ check_weak_passwords_pre8() {
     n=$((n + 1))
     [ "$n" -gt "$(num "$MAX_PASSWORD_CHECKS")" ] && break
 
-    # Escape single quotes for SQL literal
     psql=$(printf "%s" "$p" | awk '{gsub(/\047/,"\\\047"); printf "%s", $0}')
 
-    # Check plain, UPPER, Capitalize variants
     q="SELECT CONCAT(user,'@',host) FROM mysql.user WHERE ${PASS_COL} = PASSWORD('${psql}') OR ${PASS_COL} = PASSWORD(UPPER('${psql}')) OR ${PASS_COL} = PASSWORD(CONCAT(UPPER(LEFT('${psql}',1)), SUBSTRING('${psql}',2,LENGTH('${psql}'))));"
 
     hits=$(mysql_query_silent "$q" | tr -d '\r' || true)
     if [ -n "$hits" ]; then
       WEAK_PASSWORD_HITS=$((WEAK_PASSWORD_HITS + 1))
       if [ "$JSON" -eq 1 ]; then
-        # store each user hit
         while IFS= read -r u; do
           [ -z "$u" ] && continue
           WEAK_PASSWORD_USERS_JSON=$(printf '%s' "$WEAK_PASSWORD_USERS_JSON" | jq -c --arg user "$u" --arg pass "$p" '. + [{user:$user, pass:$pass}]')
@@ -244,7 +241,6 @@ check_weak_passwords_pre8() {
 $hits
 EOF
       else
-        # human output
         while IFS= read -r u; do
           [ -z "$u" ] && continue
           warn "User '$u' is using weak password: $p (or case variant)"
@@ -254,11 +250,108 @@ EOF
       fi
     fi
 
-    # mild pacing: FLUSH HOSTS every 100 attempts (matches upstream idea)
     if [ $((n % 100)) -eq 0 ]; then
       mysql_query_silent "FLUSH HOSTS;" >/dev/null 2>&1 || true
     fi
   done <"$PASSWORDFILE"
+}
+
+# ---- Replication checks (best-effort) --------------------------------------
+replication_parse_show_status() {
+  # Input: table output (header + 1 row)
+  # Output: sets globals REPL_* variables
+  REPL_ROLE="none"
+  REPL_IO_RUNNING=""
+  REPL_SQL_RUNNING=""
+  REPL_SECONDS_BEHIND=""
+  REPL_SOURCE_HOST=""
+  REPL_SOURCE_PORT=""
+  REPL_LAST_IO_ERROR=""
+  REPL_LAST_SQL_ERROR=""
+
+  # Build header->index map; then pick fields with fallbacks for MySQL8 naming
+  # shellcheck disable=SC2016
+  echo "$1" | awk -F"\t" '
+    NR==1{
+      for(i=1;i<=NF;i++){h[$i]=i}
+      next
+    }
+    NR==2{
+      # Slave/Replica io/sql running
+      if (h["Slave_IO_Running"]) io=$(h["Slave_IO_Running"])
+      else if (h["Replica_IO_Running"]) io=$(h["Replica_IO_Running"])
+      else if (h["Receiver_IO_Running"]) io=$(h["Receiver_IO_Running"])
+      else io=""
+
+      if (h["Slave_SQL_Running"]) sql=$(h["Slave_SQL_Running"])
+      else if (h["Replica_SQL_Running"]) sql=$(h["Replica_SQL_Running"])
+      else if (h["Applier_SQL_Running"]) sql=$(h["Applier_SQL_Running"])
+      else sql=""
+
+      if (h["Seconds_Behind_Master"]) sbm=$(h["Seconds_Behind_Master"])
+      else if (h["Seconds_Behind_Source"]) sbm=$(h["Seconds_Behind_Source"])
+      else sbm=""
+
+      if (h["Master_Host"]) shost=$(h["Master_Host"])
+      else if (h["Source_Host"]) shost=$(h["Source_Host"])
+      else shost=""
+
+      if (h["Master_Port"]) sport=$(h["Master_Port"])
+      else if (h["Source_Port"]) sport=$(h["Source_Port"])
+      else sport=""
+
+      if (h["Last_IO_Error"]) lio=$(h["Last_IO_Error"])
+      else if (h["Last_IO_Error_Message"]) lio=$(h["Last_IO_Error_Message"])
+      else lio=""
+
+      if (h["Last_SQL_Error"]) lsql=$(h["Last_SQL_Error"])
+      else if (h["Last_SQL_Error_Message"]) lsql=$(h["Last_SQL_Error_Message"])
+      else lsql=""
+
+      printf "IO=%s\nSQL=%s\nSBM=%s\nSHOST=%s\nSPORT=%s\nLIO=%s\nLSQL=%s\n", io, sql, sbm, shost, sport, lio, lsql
+    }
+  '
+}
+
+check_replication() {
+  REPL_ROLE="none"
+  REPL_IO_RUNNING=""
+  REPL_SQL_RUNNING=""
+  REPL_SECONDS_BEHIND=""
+  REPL_SOURCE_HOST=""
+  REPL_SOURCE_PORT=""
+  REPL_LAST_IO_ERROR=""
+  REPL_LAST_SQL_ERROR=""
+  MASTER_LOG_FILE=""
+  MASTER_LOG_POS=""
+
+  # Master status (if binlog enabled)
+  ms=$(mysql_query_table "SHOW MASTER STATUS;" | tr -d '\r' || true)
+  if [ -n "$ms" ]; then
+    MASTER_LOG_FILE=$(printf "%s\n" "$ms" | awk -F"\t" 'NR==1{for(i=1;i<=NF;i++){h[$i]=i};next} NR==2{if(h["File"])print $(h["File"]); exit}')
+    MASTER_LOG_POS=$(printf "%s\n" "$ms" | awk -F"\t" 'NR==1{for(i=1;i<=NF;i++){h[$i]=i};next} NR==2{if(h["Position"])print $(h["Position"]); exit}')
+    [ -n "$MASTER_LOG_FILE" ] && REPL_ROLE="master"
+  fi
+
+  # Slave/Replica status
+  ss=$(mysql_query_table "SHOW SLAVE STATUS;" | tr -d '\r' || true)
+  if [ -z "$ss" ]; then
+    ss=$(mysql_query_table "SHOW REPLICA STATUS;" | tr -d '\r' || true)
+  fi
+
+  if [ -n "$ss" ]; then
+    parsed=$(replication_parse_show_status "$ss")
+    REPL_IO_RUNNING=$(printf "%s\n" "$parsed" | awk -F= '/^IO=/{print $2; exit}')
+    REPL_SQL_RUNNING=$(printf "%s\n" "$parsed" | awk -F= '/^SQL=/{print $2; exit}')
+    REPL_SECONDS_BEHIND=$(printf "%s\n" "$parsed" | awk -F= '/^SBM=/{print $2; exit}')
+    REPL_SOURCE_HOST=$(printf "%s\n" "$parsed" | awk -F= '/^SHOST=/{print $2; exit}')
+    REPL_SOURCE_PORT=$(printf "%s\n" "$parsed" | awk -F= '/^SPORT=/{print $2; exit}')
+    REPL_LAST_IO_ERROR=$(printf "%s\n" "$parsed" | awk -F= '/^LIO=/{print $2; exit}')
+    REPL_LAST_SQL_ERROR=$(printf "%s\n" "$parsed" | awk -F= '/^LSQL=/{print $2; exit}')
+
+    # if both master and slave signals, treat as both
+    if [ "$REPL_ROLE" = "master" ]; then REPL_ROLE="master+replica"; else REPL_ROLE="replica"; fi
+  fi
 }
 
 # ---- Core collection -------------------------------------------------------
@@ -378,6 +471,9 @@ WEAK_PASSWORD_HITS=0
 WEAK_PASSWORD_USERS_JSON="[]"
 check_weak_passwords_pre8
 
+# Best-effort replication scan
+check_replication
+
 # ---- Output (JSON) ---------------------------------------------------------
 if [ "$JSON" -eq 1 ]; then
   jq -n \
@@ -419,6 +515,16 @@ if [ "$JSON" -eq 1 ]; then
     --argjson cve_list "$CVE_LIST_JSON" \
     --arg weak_password_hits "$WEAK_PASSWORD_HITS" \
     --argjson weak_password_users "$WEAK_PASSWORD_USERS_JSON" \
+    --arg repl_role "$REPL_ROLE" \
+    --arg repl_io_running "$REPL_IO_RUNNING" \
+    --arg repl_sql_running "$REPL_SQL_RUNNING" \
+    --arg repl_seconds_behind "$REPL_SECONDS_BEHIND" \
+    --arg repl_source_host "$REPL_SOURCE_HOST" \
+    --arg repl_source_port "$REPL_SOURCE_PORT" \
+    --arg repl_last_io_error "$REPL_LAST_IO_ERROR" \
+    --arg repl_last_sql_error "$REPL_LAST_SQL_ERROR" \
+    --arg master_log_file "$MASTER_LOG_FILE" \
+    --arg master_log_pos "$MASTER_LOG_POS" \
     '{
       version:$version,
       flavor:$flavor,
@@ -457,7 +563,19 @@ if [ "$JSON" -eq 1 ]; then
       cve_found:$cve_found,
       cve_list:$cve_list,
       weak_password_hits:$weak_password_hits,
-      weak_password_users:$weak_password_users
+      weak_password_users:$weak_password_users,
+      replication:{
+        role:$repl_role,
+        io_running:$repl_io_running,
+        sql_running:$repl_sql_running,
+        seconds_behind:$repl_seconds_behind,
+        source_host:$repl_source_host,
+        source_port:$repl_source_port,
+        last_io_error:$repl_last_io_error,
+        last_sql_error:$repl_last_sql_error,
+        master_log_file:$master_log_file,
+        master_log_pos:$master_log_pos
+      }
     }'
   exit 0
 fi
@@ -471,6 +589,29 @@ info "Server version:  $SERVER_VERSION"
 info "Server flavor:   $SERVER_FLAVOR"
 [ -n "$SERVER_COMMENT" ] && info "Version comment: $SERVER_COMMENT"
 info "Uptime (s):      $UPTIME"
+
+section "Replication"
+info "role: $REPL_ROLE"
+if [ "$REPL_ROLE" = "replica" ] || [ "$REPL_ROLE" = "master+replica" ]; then
+  [ -n "$REPL_SOURCE_HOST" ] && info "source_host: $REPL_SOURCE_HOST"
+  [ -n "$REPL_SOURCE_PORT" ] && info "source_port: $REPL_SOURCE_PORT"
+  [ -n "$REPL_IO_RUNNING" ] && info "io_running: $REPL_IO_RUNNING"
+  [ -n "$REPL_SQL_RUNNING" ] && info "sql_running: $REPL_SQL_RUNNING"
+  [ -n "$REPL_SECONDS_BEHIND" ] && info "seconds_behind: $REPL_SECONDS_BEHIND"
+
+  [ "$REPL_IO_RUNNING" = "No" ] && warn "Replica IO thread not running" || true
+  [ "$REPL_SQL_RUNNING" = "No" ] && warn "Replica SQL thread not running" || true
+  if [ -n "$REPL_LAST_IO_ERROR" ]; then
+    warn "Last_IO_Error: $REPL_LAST_IO_ERROR"
+  fi
+  if [ -n "$REPL_LAST_SQL_ERROR" ]; then
+    warn "Last_SQL_Error: $REPL_LAST_SQL_ERROR"
+  fi
+fi
+if [ "$REPL_ROLE" = "master" ] || [ "$REPL_ROLE" = "master+replica" ]; then
+  [ -n "$MASTER_LOG_FILE" ] && info "master_log_file: $MASTER_LOG_FILE"
+  [ -n "$MASTER_LOG_POS" ] && info "master_log_pos:  $MASTER_LOG_POS"
+fi
 
 section "CVE Security Recommendations"
 if [ -z "$CVEFILE" ]; then
