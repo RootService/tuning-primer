@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="1.9.0-devel"
+VERSION="2.0.0-devel"
 
 usage() {
   cat <<USAGE
@@ -430,6 +430,12 @@ INNODB_LOG_WRITE_REQ=$(kv_get "$STATUS_TSV" Innodb_log_write_requests)
 INNODB_OS_LOG_FSYNCS=$(kv_get "$STATUS_TSV" Innodb_os_log_fsyncs)
 INNODB_OS_LOG_WRITTEN=$(kv_get "$STATUS_TSV" Innodb_os_log_written)
 
+INNODB_BP_PAGES_TOTAL=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_pages_total)
+INNODB_BP_PAGES_FREE=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_pages_free)
+INNODB_BP_PAGES_DIRTY=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_pages_dirty)
+INNODB_BP_BYTES_DATA=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_bytes_data)
+INNODB_BP_BYTES_FREE=$(kv_get "$STATUS_TSV" Innodb_buffer_pool_bytes_free)
+
 THREAD_CACHE_SIZE=$(kv_get "$VARS_TSV" thread_cache_size)
 TABLE_OPEN_CACHE=$(kv_get "$VARS_TSV" table_open_cache)
 OPENED_TABLES=$(kv_get "$STATUS_TSV" Opened_tables)
@@ -527,6 +533,15 @@ else
   KEY_BUFFER_HIT_PCT=""
 fi
 
+# InnoDB buffer pool free percent (best-effort)
+bpt=$(num "$INNODB_BP_PAGES_TOTAL")
+bpf=$(num "$INNODB_BP_PAGES_FREE")
+if [ "$bpt" -gt 0 ]; then
+  INNODB_BP_FREE_PCT=$(pct "$bpf" "$bpt")
+else
+  INNODB_BP_FREE_PCT=""
+fi
+
 # Memory estimate (best-effort)
 RAM_TOTAL=$(mem_total_bytes)
 GLOBAL_BUFFERS=$(awk -v a="$(num "$KEY_BUFFER_SIZE")" -v b="$(num "$INNODB_BP_SIZE")" -v c="$(num "$QCACHE_SIZE")" 'BEGIN{printf "%d", a+b+c}')
@@ -594,6 +609,12 @@ if [ "$JSON" -eq 1 ]; then
     --arg innodb_log_write_requests "$INNODB_LOG_WRITE_REQ" \
     --arg innodb_os_log_fsyncs "$INNODB_OS_LOG_FSYNCS" \
     --arg innodb_os_log_written "$INNODB_OS_LOG_WRITTEN" \
+    --arg innodb_buffer_pool_pages_total "$INNODB_BP_PAGES_TOTAL" \
+    --arg innodb_buffer_pool_pages_free "$INNODB_BP_PAGES_FREE" \
+    --arg innodb_buffer_pool_pages_dirty "$INNODB_BP_PAGES_DIRTY" \
+    --arg innodb_buffer_pool_bytes_data "$INNODB_BP_BYTES_DATA" \
+    --arg innodb_buffer_pool_bytes_free "$INNODB_BP_BYTES_FREE" \
+    --arg innodb_buffer_pool_free_pct "$INNODB_BP_FREE_PCT" \
     --arg bind_address "$BIND_ADDRESS" \
     --arg skip_networking "$SKIP_NETWORKING" \
     --arg port "$PORT_VAR" \
@@ -681,6 +702,12 @@ if [ "$JSON" -eq 1 ]; then
       innodb_log_write_requests:$innodb_log_write_requests,
       innodb_os_log_fsyncs:$innodb_os_log_fsyncs,
       innodb_os_log_written:$innodb_os_log_written,
+      innodb_buffer_pool_pages_total:$innodb_buffer_pool_pages_total,
+      innodb_buffer_pool_pages_free:$innodb_buffer_pool_pages_free,
+      innodb_buffer_pool_pages_dirty:$innodb_buffer_pool_pages_dirty,
+      innodb_buffer_pool_bytes_data:$innodb_buffer_pool_bytes_data,
+      innodb_buffer_pool_bytes_free:$innodb_buffer_pool_bytes_free,
+      innodb_buffer_pool_free_pct:$innodb_buffer_pool_free_pct,
       bind_address:$bind_address,
       skip_networking:$skip_networking,
       port:$port,
@@ -918,6 +945,18 @@ fi
 [ -n "$INNODB_LOG_WRITE_REQ" ] && info "Innodb_log_write_requests: $INNODB_LOG_WRITE_REQ"
 [ -n "$INNODB_LOG_WAITS" ] && info "Innodb_log_waits:          $INNODB_LOG_WAITS"
 [ "$(num "$INNODB_LOG_WAITS")" -gt 0 ] && warn "InnoDB log waits detected ($INNODB_LOG_WAITS) - consider larger innodb_log_buffer_size or faster disk" || true
+
+# buffer pool occupancy
+if [ "$(num "$INNODB_BP_PAGES_TOTAL")" -gt 0 ]; then
+  info "Innodb_buffer_pool_pages_total: $INNODB_BP_PAGES_TOTAL"
+  info "Innodb_buffer_pool_pages_free:  $INNODB_BP_PAGES_FREE (${INNODB_BP_FREE_PCT}% free)"
+  [ "$(num "$INNODB_BP_PAGES_DIRTY")" -gt 0 ] && info "Innodb_buffer_pool_pages_dirty: $INNODB_BP_PAGES_DIRTY" || true
+  [ "$(num "$INNODB_BP_FREE_PCT")" -lt 3 ] && warn "InnoDB buffer pool has <3% free pages (${INNODB_BP_FREE_PCT}%)" || true
+fi
+if [ "$(num "$INNODB_BP_BYTES_DATA")" -gt 0 ] || [ "$(num "$INNODB_BP_BYTES_FREE")" -gt 0 ]; then
+  info "Innodb_buffer_pool_bytes_data:  $(bytes_h "$INNODB_BP_BYTES_DATA")"
+  info "Innodb_buffer_pool_bytes_free:  $(bytes_h "$INNODB_BP_BYTES_FREE")"
+fi
 
 if [ "${INNODB_FLUSH_LOG_AT_TRX:-}" = "2" ] || [ "${INNODB_FLUSH_LOG_AT_TRX:-}" = "0" ]; then
   warn "innodb_flush_log_at_trx_commit=$INNODB_FLUSH_LOG_AT_TRX reduces durability"
