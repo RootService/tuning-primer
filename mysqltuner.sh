@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.62.0-devel"
+VERSION="3.62.1-devel"
 
 usage() {
   cat <<USAGE
@@ -105,6 +105,9 @@ need_cmd jq
 need_cmd sed
 need_cmd getconf
 need_cmd uname
+
+# If JSON mode, suppress all printing early (warnings should still be recorded).
+[ "$JSON" -eq 1 ] && SILENT=1
 
 # ---- MySQL command builder -------------------------------------------------
 MYSQL_CMD="mysql"
@@ -234,23 +237,25 @@ mem_total_bytes() {
 section() { [ "$SILENT" -eq 1 ] && return 0; echo; echo "== $* =="; }
 info()    { [ "$SILENT" -eq 1 ] && return 0; echo "[INFO] $*"; }
 warn() {
-  [ "$SILENT" -eq 1 ] && return 0
-  echo "[WARN] $*"
+  # Always record; only print when not silent
   if [ -n "${REC_WARN:-}" ]; then
     REC_WARN=$(printf '%s\n%s' "$REC_WARN" "$*")
   else
     REC_WARN=$*
   fi
+  [ "$SILENT" -eq 1 ] && return 0
+  echo "[WARN] $*"
 }
 
 ok() {
-  [ "$SILENT" -eq 1 ] && return 0
-  echo "[OK]   $*"
+  # Always record; only print when not silent
   if [ -n "${REC_OK:-}" ]; then
     REC_OK=$(printf '%s\n%s' "$REC_OK" "$*")
   else
     REC_OK=$*
   fi
+  [ "$SILENT" -eq 1 ] && return 0
+  echo "[OK]   $*"
 }
 
 # ---- Version parsing --------------------------------------------------------
