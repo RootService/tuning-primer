@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.12.0-devel"
+VERSION="3.13.0-devel"
 
 usage() {
   cat <<USAGE
@@ -909,6 +909,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg sort_merge_pct "${SORT_MERGE_PCT:-}" \
     --arg joins_without_indexes "$JOINS_WITHOUT_INDEXES" \
     --arg joins_without_indexes_per_day "$JOINS_WO_IDX_PER_DAY" \
+    --arg tmp_disk_pct "${TMP_DISK_PCT:-}" \
     --arg select_full_join "$SELECT_FULL_JOIN" \
     --arg select_full_range_join "$SELECT_FULL_RANGE_JOIN" \
     --arg select_range_check "$SELECT_RANGE_CHECK" \
@@ -1075,6 +1076,7 @@ if [ "$JSON" -eq 1 ]; then
       sort_merge_pct:$sort_merge_pct,
       joins_without_indexes:$joins_without_indexes,
       joins_without_indexes_per_day:$joins_without_indexes_per_day,
+      tmp_disk_pct:$tmp_disk_pct,
       select_full_join:$select_full_join,
       select_full_range_join:$select_full_range_join,
       select_range_check:$select_range_check,
@@ -1322,10 +1324,14 @@ info "Sort_merge_passes: $SORT_MERGE_PASSES"
 info "Sort_scan:         $SORT_SCAN"
 info "Sort_range:        $SORT_RANGE"
 info "Sort_rows:         $SORT_ROWS"
-[ "$(num "$SORT_MERGE_PASSES")" -gt 0 ] && warn "Sort_merge_passes > 0 (consider increasing sort_buffer_size or optimizing sorts)" || true
-if [ -n "${SORT_MERGE_PCT:-}" ]; then
-  info "Sort merge %:      ${SORT_MERGE_PCT}% (merge_passes / (scan+range))"
-  [ "$(num "$SORT_MERGE_PCT")" -ge 5 ] && warn "High sort merge percentage (${SORT_MERGE_PCT}%)" || true
+
+if [ "$(num "$TOTAL_SORTS")" -eq 0 ]; then
+  ok "No sort requiring temporary tables"
+elif [ -n "${SORT_MERGE_PCT:-}" ]; then
+  info "Sorts requiring temporary tables: ${SORT_MERGE_PCT}% ($SORT_MERGE_PASSES temp sorts / $TOTAL_SORTS sorts)"
+  [ "$(num "$SORT_MERGE_PCT")" -gt 10 ] && warn "High sorts requiring temporary tables (${SORT_MERGE_PCT}%)" || true
+else
+  info "Sorts: total=$TOTAL_SORTS"
 fi
 
 section "Joins"
@@ -1373,9 +1379,19 @@ info "effective_tmp_table_size: $(bytes_h "$MAX_TMP_TABLE_SIZE") (min of tmp_tab
 
 tmp=$(num "$CREATED_TMP_TABLES")
 tmpdisk=$(num "$CREATED_TMP_DISK_TABLES")
-if [ "$tmp" -gt 0 ] && [ "$tmpdisk" -gt 0 ]; then
-  p=$(pct "$tmpdisk" "$tmp")
-  [ "$p" -ge 25 ] && warn "High tmp tables on disk: ${p}%" || ok "Tmp tables on disk: ${p}%"
+if [ "$tmp" -gt 0 ]; then
+  TMP_DISK_PCT=$(pct "$tmpdisk" "$tmp")
+else
+  TMP_DISK_PCT=""
+fi
+
+if [ -n "${TMP_DISK_PCT:-}" ]; then
+  info "Tmp tables on disk: ${TMP_DISK_PCT}% (${CREATED_TMP_DISK_TABLES}/${CREATED_TMP_TABLES})"
+  if [ "$(num "$TMP_DISK_PCT")" -gt 25 ] && [ "$(num "$MAX_TMP_TABLE_SIZE")" -lt 268435456 ]; then
+    warn "Temporary tables created on disk high (${TMP_DISK_PCT}%) and effective tmp table size < 256MiB"
+  elif [ "$(num "$TMP_DISK_PCT")" -gt 25 ] && [ "$(num "$MAX_TMP_TABLE_SIZE")" -ge 268435456 ]; then
+    warn "Temporary tables created on disk high (${TMP_DISK_PCT}%) (tmp table size already large)"
+  fi
 fi
 
 section "InnoDB"
