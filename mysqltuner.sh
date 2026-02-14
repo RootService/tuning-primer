@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.17.1-devel"
+VERSION="3.18.0-devel"
 
 usage() {
   cat <<USAGE
@@ -1560,7 +1560,7 @@ if [ "$th" -gt 0 ] || [ "$tm" -gt 0 ]; then
   ttot=$((th + tm))
   if [ "$ttot" -gt 0 ]; then
     TABLE_CACHE_HIT_PCT=$(pct "$th" "$ttot")
-    info "Table cache hit rate:    ${TABLE_CACHE_HIT_PCT}%"
+    info "Table cache hit rate:    ${TABLE_CACHE_HIT_PCT}% ($th hits / $ttot requests)"
     [ "$TABLE_CACHE_HIT_PCT" -lt 20 ] && warn "Low table cache hit rate (${TABLE_CACHE_HIT_PCT}%)" || true
   fi
 else
@@ -1569,7 +1569,7 @@ else
   od=$(num "$OPENED_TABLES")
   if [ "$od" -gt 0 ]; then
     TABLE_CACHE_HIT_PCT=$(pct "$ot" "$od")
-    info "Table cache hit rate:    ${TABLE_CACHE_HIT_PCT}% (heuristic)"
+    info "Table cache hit rate:    ${TABLE_CACHE_HIT_PCT}% ($ot hits / $od requests)"
   else
     TABLE_CACHE_HIT_PCT=""
   fi
