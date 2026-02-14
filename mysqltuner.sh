@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.53.1-devel"
+VERSION="3.54.0-devel"
 
 usage() {
   cat <<USAGE
@@ -969,6 +969,16 @@ if [ -n "$DUMP_DIR" ]; then
   if [ "$TBSTAT" -eq 1 ] || [ -n "$SCHEMA_DIR" ]; then
     printf '%s\n' "$TABLE_METRICS_JSON" >"$DUMP_DIR/table_metrics.json"
     printf '%s' "$TABLE_METRICS_JSON" | dump_csv_file "$DUMP_DIR/table_metrics.csv" "Schema,Table,Engine,Collation,RowFormat,Rows,AvgRowLength,DataBytes,IndexBytes,TotalBytes,DataFreeBytes,Columns,PKColumns,AutoIncColumns,NullableColumns,DatetimeColumns,JSONColumns,TextColumns,BlobColumns" '.[] | [.schema,.table,(.engine//""),(.collation//""),(.row_format//""),(.rows|tostring),(.avg_row_length|tostring),(.data_bytes|tostring),(.index_bytes|tostring),(.total_bytes|tostring),(.data_free_bytes|tostring),(.columns|tostring),(.pk_columns|tostring),(.auto_increment_columns|tostring),(.nullable_columns|tostring),(.datetime_columns|tostring),(.json_columns|tostring),(.text_columns|tostring),(.blob_columns|tostring)] | @csv'
+  fi
+
+  # schema_documentation.md (consolidated, upstream-like)
+  if [ -n "$SCHEMA_DIR" ] && [ -f "$SCHEMA_DIR/schema.md" ]; then
+    {
+      cat "$SCHEMA_DIR/schema.md"
+      printf '\n\n## Mermaid ER Diagram\n\n```mermaid\n'
+      [ -f "$SCHEMA_DIR/schema.mmd" ] && cat "$SCHEMA_DIR/schema.mmd" || true
+      printf '\n```\n'
+    } >"$DUMP_DIR/schema_documentation.md" 2>/dev/null || true
   fi
 
   # duplicate_indexes.csv
