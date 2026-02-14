@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="1.3.0-devel"
+VERSION="1.4.0-devel"
 
 usage() {
   cat <<USAGE
@@ -399,6 +399,8 @@ THREADS_CREATED=$(kv_get "$STATUS_TSV" Threads_created)
 CONNECTIONS=$(kv_get "$STATUS_TSV" Connections)
 ABORTED_CONNECTS=$(kv_get "$STATUS_TSV" Aborted_connects)
 
+OPEN_TABLES=$(kv_get "$STATUS_TSV" Open_tables)
+
 SLOW_QUERY_LOG=$(kv_get "$VARS_TSV" slow_query_log)
 LONG_QUERY_TIME=$(kv_get "$VARS_TSV" long_query_time)
 SLOW_QUERIES=$(kv_get "$STATUS_TSV" Slow_queries)
@@ -452,6 +454,17 @@ QPS=$(rate_per_s "$QUESTIONS" "$UPTIME_S")
 ABORT_PCT=$(pct "$ABORTED_CONNECTS" "$CONNECTIONS")
 OPENED_TABLES_PS=$(rate_per_s "$OPENED_TABLES" "$UPTIME_S")
 
+# Thread cache hit rate (best-effort)
+conn=$(num "$CONNECTIONS")
+thrcreated=$(num "$THREADS_CREATED")
+if [ "$conn" -gt 0 ]; then
+  createdpct=$(pct "$thrcreated" "$conn")
+  THREAD_CACHE_HIT_PCT=$((100 - createdpct))
+  [ "$THREAD_CACHE_HIT_PCT" -lt 0 ] && THREAD_CACHE_HIT_PCT=0
+else
+  THREAD_CACHE_HIT_PCT=""
+fi
+
 # MyISAM key buffer hit rate (best-effort)
 krreq=$(num "$KEY_READ_REQUESTS")
 kr=$(num "$KEY_READS")
@@ -504,8 +517,11 @@ if [ "$JSON" -eq 1 ]; then
     --arg threads_connected "$THREADS_CONNECTED" \
     --arg threads_running "$THREADS_RUNNING" \
     --arg threads_created "$THREADS_CREATED" \
+    --arg thread_cache_size "$THREAD_CACHE_SIZE" \
+    --arg thread_cache_hit_pct "$THREAD_CACHE_HIT_PCT" \
     --arg aborted_connects_pct "$ABORT_PCT" \
     --arg opened_tables_per_s "$OPENED_TABLES_PS" \
+    --arg open_tables "$OPEN_TABLES" \
     --arg slow_query_log "$SLOW_QUERY_LOG" \
     --arg slow_queries "$SLOW_QUERIES" \
     --arg innodb_buffer_pool_size "$INNODB_BP_SIZE" \
@@ -557,8 +573,11 @@ if [ "$JSON" -eq 1 ]; then
       threads_connected:$threads_connected,
       threads_running:$threads_running,
       threads_created:$threads_created,
+      thread_cache_size:$thread_cache_size,
+      thread_cache_hit_pct:$thread_cache_hit_pct,
       aborted_connects_pct:$aborted_connects_pct,
       opened_tables_per_s:$opened_tables_per_s,
+      open_tables:$open_tables,
       slow_query_log:$slow_query_log,
       slow_queries:$slow_queries,
       innodb_buffer_pool_size:$innodb_buffer_pool_size,
@@ -676,6 +695,11 @@ info "Max_used_connections: $MAX_USED_CONNECTIONS"
 info "Threads_connected:    $THREADS_CONNECTED"
 info "Threads_running:      $THREADS_RUNNING"
 info "Threads_created:      $THREADS_CREATED"
+info "thread_cache_size:    $THREAD_CACHE_SIZE"
+if [ -n "${THREAD_CACHE_HIT_PCT:-}" ]; then
+  info "Thread cache hit rate: ${THREAD_CACHE_HIT_PCT}%"
+  [ "$(num "$THREAD_CACHE_SIZE")" -gt 0 ] && [ "$THREAD_CACHE_HIT_PCT" -lt 90 ] && warn "Low thread cache hit rate (${THREAD_CACHE_HIT_PCT}%)" || true
+fi
 info "Aborted_connects:     $ABORTED_CONNECTS (${ABORT_PCT}%)"
 [ "$(num "$ABORTED_CONNECTS")" -gt 0 ] && [ "$ABORT_PCT" -ge 5 ] && warn "High aborted connect rate (${ABORT_PCT}%)"
 
@@ -737,7 +761,12 @@ fi
 
 section "Table Open Cache"
 info "table_open_cache:  $TABLE_OPEN_CACHE"
+info "Open_tables:       $OPEN_TABLES"
 info "Opened_tables:     $OPENED_TABLES (~${OPENED_TABLES_PS}/s)"
+# crude heuristic: if we open lots of tables per second, cache might be too small
+ots=$(printf "%s" "$OPENED_TABLES_PS" | awk -F. '{print $1}')
+ots=$(num "$ots")
+[ "$ots" -ge 1 ] && warn "High Opened_tables rate (~${OPENED_TABLES_PS}/s); consider increasing table_open_cache" || true
 
 section "Packet Size"
 info "max_allowed_packet: $(bytes_h "$MAX_ALLOWED_PACKET")"
