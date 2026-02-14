@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.35.0-devel"
+VERSION="3.36.0-devel"
 
 usage() {
   cat <<USAGE
@@ -29,6 +29,7 @@ Security/data options:
 Output options:
   --silent
   --json
+  --dump-dir <dir>          (write CSV dumps like upstream into this directory)
 
 Misc:
   -h, --help
@@ -54,7 +55,7 @@ cleanup() {
 }
 
 # ---- Argument parsing (POSIX-compatible) -----------------------------------
-HOST=""; PORT=""; SOCKET=""; USER=""; PASS=""; DEFAULTS_FILE=""; SILENT=0; JSON=0
+HOST=""; PORT=""; SOCKET=""; USER=""; PASS=""; DEFAULTS_FILE=""; SILENT=0; JSON=0; DUMP_DIR=""
 CVEFILE=""
 PASSWORDFILE=""
 MAX_PASSWORD_CHECKS=500
@@ -74,6 +75,7 @@ while [ $# -gt 0 ]; do
     --max-password-checks) shift; MAX_PASSWORD_CHECKS="${1-}" ;;
     --silent) SILENT=1 ;;
     --json) JSON=1 ;;
+    --dump-dir) shift; DUMP_DIR="${1-}" ;;
     --) shift; break ;;
     -*) die "unknown option: $1" ;;
     *) break ;;
@@ -118,6 +120,18 @@ mysql_query_table() {
 }
 
 # ---- KV helpers ------------------------------------------------------------
+
+dump_csv_file() {
+  # dump_csv_file <path> <header> <jq_filter>
+  # jq_filter will be applied to JSON read from stdin; must output CSV lines (no header)
+  path="$1"; header="$2"; filter="$3"
+  dir=$(dirname "$path")
+  [ -n "$dir" ] && [ "$dir" != "." ] && mkdir -p "$dir" 2>/dev/null || true
+  {
+    printf '%s\n' "$header"
+    jq -r "$filter"
+  } >"$path"
+}
 kv_get() { awk -F"\t" -v k="$2" '($1==k){sub(/^[^\t]*\t/, ""); print; exit}' "$1"; }
 kv_dump_file() { mysql_query_silent "$1" | awk 'NF>=2{print $1"\t"$2}' >"$2"; }
 
@@ -571,6 +585,23 @@ PK_INFO_JSON=$(mysql_query_silent "SELECT c.table_schema, c.table_name, c.column
 # 13) fulltext columns (best-effort)
 FULLTEXT_COLS_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name, data_type FROM information_schema.columns WHERE table_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND data_type='fulltext';" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], data_type:.[3]}]')
 FULLTEXT_COLS_COUNT=$(printf '%s' "$FULLTEXT_COLS_JSON" | jq -r 'length')
+
+# Optional: write upstream-style CSV dumps
+if [ -n "$DUMP_DIR" ]; then
+  mkdir -p "$DUMP_DIR" 2>/dev/null || true
+
+  # tables_without_primary_keys.csv (ours: tables without PRI/UNI)
+  printf '%s' "$TABLES_NO_PK_JSON" | dump_csv_file "$DUMP_DIR/tables_without_primary_keys.csv" "Schema,Table" '.[] | [.schema,.table] | @csv'
+
+  # tables_non_innodb.csv
+  printf '%s' "$NON_INNODB_TABLES_JSON" | dump_csv_file "$DUMP_DIR/tables_non_innodb.csv" "Schema,Table,Engine" '.[] | [.schema,.table,.engine] | @csv'
+
+  # columns_non_utf8.csv
+  printf '%s' "$NON_UTF8_COLS_JSON" | dump_csv_file "$DUMP_DIR/columns_non_utf8.csv" "Schema,Table,Column,Charset,Collation,Data Type,Max Length" '.[] | [.schema,.table,.column,(.charset//""),(.collation//""),.data_type,(.max_len//"")] | @csv'
+
+  # fulltext_columns.csv
+  printf '%s' "$FULLTEXT_COLS_JSON" | dump_csv_file "$DUMP_DIR/fulltext_columns.csv" "Schema,Table,Column,Data Type" '.[] | [.schema,.table,.column,.data_type] | @csv'
+fi
 
 # 14) MySQL 8.0+ specific modeling checks (best-effort)
 # 14a) JSON columns without generated columns (virtual/stored) for indexing
