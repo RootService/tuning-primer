@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.32.0-devel"
+VERSION="3.33.0-devel"
 
 usage() {
   cat <<USAGE
@@ -565,6 +565,18 @@ NAMING_COL_ISSUES_COUNT=$(printf '%s' "$NAMING_COL_ISSUES_JSON" | jq -r 'length'
 NON_UTF8_COLS_JSON=$(mysql_query_silent "SELECT table_schema, table_name, column_name, character_set_name, collation_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_schema NOT IN ('sys','mysql','performance_schema','information_schema') AND (character_set_name IS NOT NULL OR collation_name IS NOT NULL) AND (character_set_name NOT LIKE 'utf8%' OR collation_name NOT LIKE 'utf8%');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], charset:.[3], collation:.[4], data_type:.[5], max_len:.[6]}]')
 NON_UTF8_COLS_COUNT=$(printf '%s' "$NON_UTF8_COLS_JSON" | jq -r 'length')
 
+# 12) primary key modeling checks (best-effort)
+PK_INFO_JSON=$(mysql_query_silent "SELECT c.table_schema, c.table_name, c.column_name, c.data_type, c.column_type FROM information_schema.columns c JOIN information_schema.tables t USING (table_schema, table_name) WHERE t.table_type='BASE TABLE' AND c.column_key='PRI' AND c.table_schema NOT IN ('sys','mysql','information_schema','performance_schema');" | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], column:.[2], data_type:.[3], column_type:.[4]}]')
+
+PK_NAMING_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select(.column != "id" and .column != (.table + "_id")) | {schema, table, column}]')
+PK_NAMING_ISSUES_COUNT=$(printf '%s' "$PK_NAMING_ISSUES_JSON" | jq -r 'length')
+
+UUID_PK_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select((.column|test("uuid";"i"))) | select((.data_type|test("binary";"i"))|not or (.column_type|test("\\(16\\)"))|not) | {schema, table, column, data_type, column_type}]')
+UUID_PK_ISSUES_COUNT=$(printf '%s' "$UUID_PK_ISSUES_JSON" | jq -r 'length')
+
+PK_SURROGATE_ISSUES_JSON=$(printf '%s' "$PK_INFO_JSON" | jq -c '[.[] | select((.column|test("uuid";"i"))|not) | select((.data_type|test("int";"i"))|not or (.column_type|test("unsigned";"i"))|not or (.column_type|test("auto_increment";"i"))|not) | {schema, table, column, data_type, column_type}]')
+PK_SURROGATE_ISSUES_COUNT=$(printf '%s' "$PK_SURROGATE_ISSUES_JSON" | jq -r 'length')
+
 # MyISAM / key buffer metrics
 KEY_READ_REQUESTS=$(kv_get "$STATUS_TSV" Key_read_requests)
 KEY_READS=$(kv_get "$STATUS_TSV" Key_reads)
@@ -1048,6 +1060,12 @@ if [ "$JSON" -eq 1 ]; then
     --argjson naming_col_issues "$NAMING_COL_ISSUES_JSON" \
     --arg non_utf8_cols_count "$NON_UTF8_COLS_COUNT" \
     --argjson non_utf8_cols "$NON_UTF8_COLS_JSON" \
+    --arg pk_naming_issues_count "$PK_NAMING_ISSUES_COUNT" \
+    --argjson pk_naming_issues "$PK_NAMING_ISSUES_JSON" \
+    --arg uuid_pk_issues_count "$UUID_PK_ISSUES_COUNT" \
+    --argjson uuid_pk_issues "$UUID_PK_ISSUES_JSON" \
+    --arg pk_surrogate_issues_count "$PK_SURROGATE_ISSUES_COUNT" \
+    --argjson pk_surrogate_issues "$PK_SURROGATE_ISSUES_JSON" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1255,6 +1273,12 @@ if [ "$JSON" -eq 1 ]; then
       naming_col_issues:$naming_col_issues,
       non_utf8_cols_count:$non_utf8_cols_count,
       non_utf8_cols:$non_utf8_cols,
+      pk_naming_issues_count:$pk_naming_issues_count,
+      pk_naming_issues:$pk_naming_issues,
+      uuid_pk_issues_count:$uuid_pk_issues_count,
+      uuid_pk_issues:$uuid_pk_issues,
+      pk_surrogate_issues_count:$pk_surrogate_issues_count,
+      pk_surrogate_issues:$pk_surrogate_issues,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1427,6 +1451,20 @@ section "Charset / Collation"
 info "Non-UTF8 character columns: $NON_UTF8_COLS_COUNT"
 if [ "$(num "$NON_UTF8_COLS_COUNT")" -gt 0 ]; then
   printf '%s' "$NON_UTF8_COLS_JSON" | jq -r '.[:10][] | "[WARN] Non-UTF8: " + .schema + "." + .table + "." + .column + " charset=" + (.charset//"") + " collation=" + (.collation//"")'
+fi
+
+section "Primary Key Modeling"
+info "PK naming issues: $PK_NAMING_ISSUES_COUNT"
+if [ "$(num "$PK_NAMING_ISSUES_COUNT")" -gt 0 ]; then
+  printf '%s' "$PK_NAMING_ISSUES_JSON" | jq -r '.[:10][] | "[WARN] Table " + .schema + "." + .table + ": PK '" + .column + "' not named id/" + .table + "_id"'
+fi
+info "UUID PK not optimized (use BINARY(16)): $UUID_PK_ISSUES_COUNT"
+if [ "$(num "$UUID_PK_ISSUES_COUNT")" -gt 0 ]; then
+  printf '%s' "$UUID_PK_ISSUES_JSON" | jq -r '.[:10][] | "[WARN] UUID PK: " + .schema + "." + .table + "." + .column + " type=" + .column_type'
+fi
+info "PK not recommended surrogate (BIGINT UNSIGNED AUTO_INCREMENT): $PK_SURROGATE_ISSUES_COUNT"
+if [ "$(num "$PK_SURROGATE_ISSUES_COUNT")" -gt 0 ]; then
+  printf '%s' "$PK_SURROGATE_ISSUES_JSON" | jq -r '.[:10][] | "[WARN] PK type: " + .schema + "." + .table + "." + .column + " type=" + .column_type'
 fi
 
 section "Replication"
