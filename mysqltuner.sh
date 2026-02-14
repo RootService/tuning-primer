@@ -1662,7 +1662,9 @@ info "UNIQUE index redundant to PRIMARY KEY: $UNIQUE_REDUNDANT_PK_COUNT"
 [ "$(num "$SAME_COLS_DIFF_UNIQ_COUNT")" -gt 0 ] && warn "Non-unique indexes detected where an identical UNIQUE index exists. Consider dropping the non-unique ones." || true
 [ "$(num "$REDUNDANT_INDEXES_COUNT")" -gt 0 ] && warn "Redundant prefix indexes detected. Consider dropping narrower ones if covered by wider indexes." || true
 [ "$(num "$UNIQUE_REDUNDANT_PK_COUNT")" -gt 0 ] && warn "UNIQUE indexes duplicating PRIMARY KEY detected. Consider dropping them." || true
-[ "$(num "$WORST_SELECTIVITY_COUNT")" -gt 0 ] && warn "Some indexes have low selectivity. Review them and consider adding more selective leading columns." || true
+# add a recommendation only when we actually flagged low/very-low selectivity
+LOW_SEL_WARN_COUNT=$(printf '%s' "$WORST_SELECTIVITY_JSON" | jq -r '[ .[] | select(.selectivity_pct < 50) ] | length')
+[ "$(num "$LOW_SEL_WARN_COUNT")" -gt 0 ] && warn "Some indexes have low selectivity. Review them and consider adding more selective leading columns." || true
 
 section "Replication"
 info "Galera Synchronous replication: $HAVE_GALERA"
