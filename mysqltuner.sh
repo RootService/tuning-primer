@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.13.0-devel"
+VERSION="3.14.0-devel"
 
 usage() {
   cat <<USAGE
@@ -1329,7 +1329,11 @@ if [ "$(num "$TOTAL_SORTS")" -eq 0 ]; then
   ok "No sort requiring temporary tables"
 elif [ -n "${SORT_MERGE_PCT:-}" ]; then
   info "Sorts requiring temporary tables: ${SORT_MERGE_PCT}% ($SORT_MERGE_PASSES temp sorts / $TOTAL_SORTS sorts)"
-  [ "$(num "$SORT_MERGE_PCT")" -gt 10 ] && warn "High sorts requiring temporary tables (${SORT_MERGE_PCT}%)" || true
+  if [ "$(num "$SORT_MERGE_PCT")" -gt 10 ]; then
+    warn "High sorts requiring temporary tables (${SORT_MERGE_PCT}%)"
+    warn "Consider increasing sort_buffer_size (current: $(bytes_h "$SORT_BUFFER_SIZE"))"
+    warn "Consider increasing read_rnd_buffer_size (current: $(bytes_h "$READ_RND_BUFFER_SIZE"))"
+  fi
 else
   info "Sorts: total=$TOTAL_SORTS"
 fi
@@ -1339,6 +1343,10 @@ info "Select_full_join:       $SELECT_FULL_JOIN"
 info "Select_full_range_join: $SELECT_FULL_RANGE_JOIN"
 info "Select_range_check:     $SELECT_RANGE_CHECK"
 info "Joins without indexes:  $JOINS_WITHOUT_INDEXES (~${JOINS_WO_IDX_PER_DAY}/day)"
+if [ "$(num "$JOINS_WO_IDX_PER_DAY")" -gt 250 ]; then
+  warn "Joins without indexes per day is high ($JOINS_WO_IDX_PER_DAY/day)"
+  [ "$(num "$JOIN_BUFFER_SIZE")" -lt 4194304 ] && warn "Consider increasing join_buffer_size (current: $(bytes_h "$JOIN_BUFFER_SIZE"))" || true
+fi
 [ "$(num "$SELECT_FULL_JOIN")" -gt 0 ] && warn "Select_full_join > 0 (joins without indexes detected)" || true
 [ "$(num "$SELECT_RANGE_CHECK")" -gt 0 ] && warn "Select_range_check > 0 (joins without keys in some cases)" || true
 
