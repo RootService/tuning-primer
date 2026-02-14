@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.56.0-devel"
+VERSION="3.57.0-devel"
 
 usage() {
   cat <<USAGE
@@ -905,9 +905,14 @@ if [ -n "$SCHEMA_DIR" ]; then
           jq -Rnr '[inputs | select(length>0) | .] | if length==0 then ["*No CHECK constraints*" ] else map("- " + .) end | .[]'
 
         printf '\n#### Foreign Keys\n\n'
-        # FK list (table -> referenced_table)
-        mysql_query_silent "SELECT constraint_name, referenced_table_name FROM information_schema.key_column_usage WHERE table_schema='$db' AND table_name='$tb' AND referenced_table_name IS NOT NULL GROUP BY constraint_name, referenced_table_name ORDER BY constraint_name;" 2>/dev/null | \
-          jq -Rnr '[inputs | select(length>0) | split("\t") | {name:.[0], ref:.[1]}] | if length==0 then ["*No FOREIGN KEY constraints*" ] else map("- " + .name + " -> " + .ref) end | .[]'
+        # FK list with update/delete rules (best-effort)
+        mysql_query_silent "SELECT k.constraint_name, k.referenced_table_name, k.column_name, k.referenced_column_name, rc.update_rule, rc.delete_rule FROM information_schema.key_column_usage k JOIN information_schema.referential_constraints rc ON k.constraint_schema=rc.constraint_schema AND k.constraint_name=rc.constraint_name WHERE k.table_schema='$db' AND k.table_name='$tb' AND k.referenced_table_name IS NOT NULL ORDER BY k.constraint_name, k.ordinal_position;" 2>/dev/null | \
+          jq -Rnr '[inputs | select(length>0) | split("\t") | {name:.[0], ref_table:.[1], col:.[2], ref_col:.[3], update_rule:.[4], delete_rule:.[5]}]
+            | if length==0 then ["*No FOREIGN KEY constraints*"]
+              else (group_by(.name,.ref_table,.update_rule,.delete_rule)
+                | map("- " + .[0].name + " -> " + .[0].ref_table + " (ON UPDATE " + (.[0].update_rule//"") + ", ON DELETE " + (.[0].delete_rule//"") + ") cols=" + (map(.col + "->" + .ref_col) | join(","))))
+              end
+            | .[]'
 
         printf '\n---\n\n'
       } | write_text_file "$SCHEMA_DIR/databases/$db/$tb.md"
