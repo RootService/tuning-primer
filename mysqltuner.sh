@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.22.0-devel"
+VERSION="3.23.1-devel"
 
 usage() {
   cat <<USAGE
@@ -263,6 +263,15 @@ EOF
       mysql_query_silent "FLUSH HOSTS;" >/dev/null 2>&1 || true
     fi
   done <"$PASSWORDFILE"
+}
+
+# ---- Performance schema memory (best-effort) -------------------------------
+pfs_memory_bytes() {
+  # Best-effort: sum all performance_schema.*.memory counters.
+  # Note: some MySQL builds may not expose a single "performance_schema\tmemory" row.
+  [ "${PERFORMANCE_SCHEMA:-OFF}" != "ON" ] && { echo 0; return; }
+  mysql_query_silent "SHOW ENGINE PERFORMANCE_SCHEMA STATUS;" |
+    awk -F"\t" '($1=="performance_schema" && $2 ~ /memory$/){sum+=$3} END{printf "%d", sum+0}'
 }
 
 # ---- Replication checks (best-effort) --------------------------------------
@@ -831,6 +840,9 @@ WEAK_PASSWORD_HITS=0
 WEAK_PASSWORD_USERS_JSON="[]"
 check_weak_passwords_pre8
 
+# Performance schema memory
+PFS_MEMORY_BYTES=$(pfs_memory_bytes)
+
 # Best-effort replication scan
 check_replication
 
@@ -942,6 +954,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg require_secure_transport "$REQUIRE_SECURE_TRANSPORT" \
     --arg have_ssl "$HAVE_SSL" \
     --arg performance_schema "$PERFORMANCE_SCHEMA" \
+    --arg performance_schema_memory_bytes "$PFS_MEMORY_BYTES" \
     --arg max_allowed_packet "$MAX_ALLOWED_PACKET" \
     --arg key_buffer_size "$KEY_BUFFER_SIZE" \
     --arg key_read_requests "$KEY_READ_REQUESTS" \
@@ -1119,6 +1132,7 @@ if [ "$JSON" -eq 1 ]; then
       require_secure_transport:$require_secure_transport,
       have_ssl:$have_ssl,
       performance_schema:$performance_schema,
+      performance_schema_memory_bytes:$performance_schema_memory_bytes,
       max_allowed_packet:$max_allowed_packet,
       key_buffer_size:$key_buffer_size,
       key_read_requests:$key_read_requests,
@@ -1683,12 +1697,15 @@ else
   fi
 fi
 
+section "Performance Schema"
+[ -n "$PERFORMANCE_SCHEMA" ] && info "performance_schema: $PERFORMANCE_SCHEMA"
+[ "$(num "$PFS_MEMORY_BYTES")" -gt 0 ] && info "Performance_schema Max memory usage: $(bytes_h "$PFS_MEMORY_BYTES")" || true
+
 section "Security (basic)"
 [ -n "$SKIP_NAME_RESOLVE" ] && info "skip_name_resolve: $SKIP_NAME_RESOLVE"
 [ -n "$LOCAL_INFILE" ] && info "local_infile: $LOCAL_INFILE"
 [ -n "$HAVE_SSL" ] && info "have_ssl: $HAVE_SSL"
 [ -n "$REQUIRE_SECURE_TRANSPORT" ] && info "require_secure_transport: $REQUIRE_SECURE_TRANSPORT"
-[ -n "$PERFORMANCE_SCHEMA" ] && info "performance_schema: $PERFORMANCE_SCHEMA"
 
 [ "$LOCAL_INFILE" = "ON" ] && warn "local_infile is ON (consider OFF unless required)" || true
 [ "$REQUIRE_SECURE_TRANSPORT" = "OFF" ] && warn "require_secure_transport is OFF (consider ON if you require TLS)" || true
