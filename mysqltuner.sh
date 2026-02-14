@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="2.4.0-devel"
+VERSION="2.5.0-devel"
 
 usage() {
   cat <<USAGE
@@ -549,6 +549,15 @@ else
   TABLE_LOCKS_WAITED_PCT=""
 fi
 
+# Query cache fragmentation percent (best-effort)
+qcfb=$(num "$QCACHE_FREE_BLOCKS")
+qctb=$(num "$QCACHE_TOTAL_BLOCKS")
+if [ "$qctb" -gt 0 ]; then
+  QCACHE_FREE_BLOCKS_PCT=$(pct "$qcfb" "$qctb")
+else
+  QCACHE_FREE_BLOCKS_PCT=""
+fi
+
 # MyISAM key buffer hit rate (best-effort)
 krreq=$(num "$KEY_READ_REQUESTS")
 kr=$(num "$KEY_READS")
@@ -680,6 +689,7 @@ if [ "$JSON" -eq 1 ]; then
     --arg qcache_free_blocks "$QCACHE_FREE_BLOCKS" \
     --arg qcache_total_blocks "$QCACHE_TOTAL_BLOCKS" \
     --arg qcache_hit_pct "$QCACHE_HIT_PCT" \
+    --arg qcache_free_blocks_pct "$QCACHE_FREE_BLOCKS_PCT" \
     --arg select_full_join "$SELECT_FULL_JOIN" \
     --arg select_full_range_join "$SELECT_FULL_RANGE_JOIN" \
     --arg select_range_check "$SELECT_RANGE_CHECK" \
@@ -790,6 +800,7 @@ if [ "$JSON" -eq 1 ]; then
       qcache_free_blocks:$qcache_free_blocks,
       qcache_total_blocks:$qcache_total_blocks,
       qcache_hit_pct:$qcache_hit_pct,
+      qcache_free_blocks_pct:$qcache_free_blocks_pct,
       select_full_join:$select_full_join,
       select_full_range_join:$select_full_range_join,
       select_range_check:$select_range_check,
@@ -947,6 +958,11 @@ info "Qcache_inserts:           $QCACHE_INSERTS"
 info "Qcache_not_cached:        $QCACHE_NOT_CACHED"
 info "Qcache_lowmem_prunes:     $QCACHE_LOWPRUNES"
 info "Qcache_free_memory:       $(bytes_h "$QCACHE_FREE_MEM")"
+info "Qcache_free_blocks:       $QCACHE_FREE_BLOCKS"
+info "Qcache_total_blocks:      $QCACHE_TOTAL_BLOCKS"
+if [ -n "${QCACHE_FREE_BLOCKS_PCT:-}" ]; then
+  info "Query cache frag (free blocks): ${QCACHE_FREE_BLOCKS_PCT}%"
+fi
 
 if [ "$(num "$QCACHE_SIZE")" -gt 0 ]; then
   if [ "$MYSQL_VER_MAJ" -ge 8 ]; then
@@ -957,6 +973,9 @@ if [ "$(num "$QCACHE_SIZE")" -gt 0 ]; then
     [ "$QCACHE_HIT_PCT" -lt 20 ] && warn "Low query cache hit rate (${QCACHE_HIT_PCT}%)" || true
   fi
   [ "$(num "$QCACHE_LOWPRUNES")" -gt 0 ] && warn "Query cache prunes detected ($QCACHE_LOWPRUNES)" || true
+  if [ -n "${QCACHE_FREE_BLOCKS_PCT:-}" ] && [ "$(num "$QCACHE_FREE_BLOCKS_PCT")" -ge 20 ]; then
+    warn "High query cache fragmentation (${QCACHE_FREE_BLOCKS_PCT}% free blocks)"
+  fi
 else
   ok "Query cache disabled"
 fi
