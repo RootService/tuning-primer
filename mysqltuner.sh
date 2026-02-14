@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="2.7.0-devel"
+VERSION="2.8.0-devel"
 
 usage() {
   cat <<USAGE
@@ -450,6 +450,8 @@ THREAD_CACHE_SIZE=$(kv_get "$VARS_TSV" thread_cache_size)
 TABLE_OPEN_CACHE=$(kv_get "$VARS_TSV" table_open_cache)
 OPENED_TABLES=$(kv_get "$STATUS_TSV" Opened_tables)
 OPENED_TABLE_DEFS=$(kv_get "$STATUS_TSV" Opened_table_definitions)
+TABLE_OPEN_CACHE_HITS=$(kv_get "$STATUS_TSV" Table_open_cache_hits)
+TABLE_OPEN_CACHE_MISSES=$(kv_get "$STATUS_TSV" Table_open_cache_misses)
 
 TABLE_LOCKS_IMMEDIATE=$(kv_get "$STATUS_TSV" Table_locks_immediate)
 TABLE_LOCKS_WAITED=$(kv_get "$STATUS_TSV" Table_locks_waited)
@@ -661,6 +663,9 @@ if [ "$JSON" -eq 1 ]; then
     --arg open_files_limit "$OPEN_FILES_LIMIT" \
     --arg open_files "$OPEN_FILES" \
     --arg table_definition_cache "$TABLE_DEF_CACHE" \
+    --arg table_open_cache_hits "$TABLE_OPEN_CACHE_HITS" \
+    --arg table_open_cache_misses "$TABLE_OPEN_CACHE_MISSES" \
+    --arg table_cache_hit_pct "${TABLE_CACHE_HIT_PCT:-}" \
     --arg table_locks_immediate "$TABLE_LOCKS_IMMEDIATE" \
     --arg table_locks_waited "$TABLE_LOCKS_WAITED" \
     --arg table_locks_waited_pct "$TABLE_LOCKS_WAITED_PCT" \
@@ -786,6 +791,9 @@ if [ "$JSON" -eq 1 ]; then
       open_files_limit:$open_files_limit,
       open_files:$open_files,
       table_definition_cache:$table_definition_cache,
+      table_open_cache_hits:$table_open_cache_hits,
+      table_open_cache_misses:$table_open_cache_misses,
+      table_cache_hit_pct:$table_cache_hit_pct,
       table_locks_immediate:$table_locks_immediate,
       table_locks_waited:$table_locks_waited,
       table_locks_waited_pct:$table_locks_waited_pct,
@@ -1157,6 +1165,28 @@ info "Opened_tables:           $OPENED_TABLES (~${OPENED_TABLES_PS}/s)"
 [ -n "$TABLE_DEF_CACHE" ] && info "table_definition_cache:   $TABLE_DEF_CACHE"
 [ -n "$OPENED_TABLE_DEFS" ] && info "Opened_table_definitions: $OPENED_TABLE_DEFS"
 # crude heuristic: if we open lots of tables per second, cache might be too small
+# table cache hit rate (best-effort)
+th=$(num "$TABLE_OPEN_CACHE_HITS")
+tm=$(num "$TABLE_OPEN_CACHE_MISSES")
+if [ "$th" -gt 0 ] || [ "$tm" -gt 0 ]; then
+  ttot=$((th + tm))
+  if [ "$ttot" -gt 0 ]; then
+    TABLE_CACHE_HIT_PCT=$(pct "$th" "$ttot")
+    info "Table cache hit rate:    ${TABLE_CACHE_HIT_PCT}%"
+    [ "$TABLE_CACHE_HIT_PCT" -lt 20 ] && warn "Low table cache hit rate (${TABLE_CACHE_HIT_PCT}%)" || true
+  fi
+else
+  # fallback heuristic when hits/misses not available
+  ot=$(num "$OPEN_TABLES")
+  od=$(num "$OPENED_TABLES")
+  if [ "$od" -gt 0 ]; then
+    TABLE_CACHE_HIT_PCT=$(pct "$ot" "$od")
+    info "Table cache hit rate:    ${TABLE_CACHE_HIT_PCT}% (heuristic)"
+  else
+    TABLE_CACHE_HIT_PCT=""
+  fi
+fi
+
 ots=$(printf "%s" "$OPENED_TABLES_PS" | awk -F. '{print $1}')
 ots=$(num "$ots")
 [ "$ots" -ge 1 ] && warn "High Opened_tables rate (~${OPENED_TABLES_PS}/s); consider increasing table_open_cache" || true
