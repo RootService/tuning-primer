@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.17.0-devel"
+VERSION="3.17.1-devel"
 
 usage() {
   cat <<USAGE
@@ -1258,7 +1258,8 @@ if [ "$HAVE_THREADPOOL" = "yes" ]; then
   info "Thread cache not used with thread pool enabled"
 else
   if [ "$(num "$THREAD_CACHE_SIZE")" -eq 0 ]; then
-    warn "Thread cache is disabled (consider setting to 4 as a starting value)"
+    warn "Thread cache is disabled"
+    warn "Set thread_cache_size to 4 as a starting value"
   fi
   if [ -n "${THREAD_CACHE_HIT_PCT:-}" ]; then
     info "Thread cache hit rate: ${THREAD_CACHE_HIT_PCT}%"
