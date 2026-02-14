@@ -4,7 +4,7 @@
 
 set -u
 
-VERSION="3.43.1-devel"
+VERSION="3.44.0-devel"
 
 usage() {
   cat <<USAGE
@@ -33,6 +33,8 @@ Output options:
   --schema-dir <dir>        (write markdown + mermaid ER docs into this directory)
 
 Misc:
+  --ignore-dbs <db1,db2>    (comma-separated)
+  --ignore-tables <t1,t2>   (comma-separated; matches table_name only)
   -h, --help
   --version
 USAGE
@@ -56,7 +58,7 @@ cleanup() {
 }
 
 # ---- Argument parsing (POSIX-compatible) -----------------------------------
-HOST=""; PORT=""; SOCKET=""; USER=""; PASS=""; DEFAULTS_FILE=""; SILENT=0; JSON=0; DUMP_DIR=""; SCHEMA_DIR=""; REC_WARN=""; REC_OK=""
+HOST=""; PORT=""; SOCKET=""; USER=""; PASS=""; DEFAULTS_FILE=""; SILENT=0; JSON=0; DUMP_DIR=""; SCHEMA_DIR=""; REC_WARN=""; REC_OK=""; IGNORE_DBS=""; IGNORE_TABLES=""
 CVEFILE=""
 PASSWORDFILE=""
 MAX_PASSWORD_CHECKS=500
@@ -74,6 +76,8 @@ while [ $# -gt 0 ]; do
     --cvefile) shift; CVEFILE="${1-}" ;;
     --passwordfile) shift; PASSWORDFILE="${1-}" ;;
     --max-password-checks) shift; MAX_PASSWORD_CHECKS="${1-}" ;;
+    --ignore-dbs) shift; IGNORE_DBS="${1-}" ;;
+    --ignore-tables) shift; IGNORE_TABLES="${1-}" ;;
     --silent) SILENT=1 ;;
     --json) JSON=1 ;;
     --dump-dir) shift; DUMP_DIR="${1-}" ;;
@@ -114,6 +118,36 @@ mysql_query() {
   echo "$1" | $MYSQL_CMD $MYSQL_ARGS
 }
 mysql_query_silent() { mysql_query "$1" 2>/dev/null; }
+
+sql_in_list() {
+  # sql_in_list "a,b,c" -> 'a','b','c'
+  # No SQL escaping: for controlled CLI values only.
+  s="$1"
+  oldIFS=$IFS
+  IFS=,
+  out=""
+  for item in $s; do
+    item=$(printf '%s' "$item" | awk '{$1=$1;print}')
+    [ -z "$item" ] && continue
+    out="${out}${out:+,}'$item'"
+  done
+  IFS=$oldIFS
+  printf '%s' "$out"
+}
+
+ignore_sql_dbs() {
+  [ -z "$IGNORE_DBS" ] && return 0
+  lst=$(sql_in_list "$IGNORE_DBS")
+  [ -z "$lst" ] && return 0
+  printf '%s' " AND TABLE_SCHEMA NOT IN ($lst)"
+}
+
+ignore_sql_tables() {
+  [ -z "$IGNORE_TABLES" ] && return 0
+  lst=$(sql_in_list "$IGNORE_TABLES")
+  [ -z "$lst" ] && return 0
+  printf '%s' " AND TABLE_NAME NOT IN ($lst)"
+}
 
 # With column names (first row is header)
 mysql_query_table() {
@@ -634,14 +668,14 @@ PLUGINS_ACTIVE_JSON=$(mysql_query_silent "SELECT plugin_name, plugin_version, pl
 PLUGINS_ACTIVE_COUNT=$(printf '%s' "$PLUGINS_ACTIVE_JSON" | jq -r 'length')
 
 # 16) Database Metrics (summary, best-effort)
-DATABASES_LIST_JSON=$(mysql_query_silent "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('mysql','performance_schema','information_schema','sys');" 2>/dev/null | jq -Rn '[inputs | select(length>0) | {schema:.}]')
+DATABASES_LIST_JSON=$(mysql_query_silent "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('mysql','performance_schema','information_schema','sys')"$( [ -n "$IGNORE_DBS" ] && printf '%s' " AND schema_name NOT IN ($(sql_in_list \"$IGNORE_DBS\"))" )";" 2>/dev/null | jq -Rn '[inputs | select(length>0) | {schema:.}]')
 DATABASES_COUNT=$(printf '%s' "$DATABASES_LIST_JSON" | jq -r 'length')
 
-DB_TABLES_COUNT=$(mysql_query_silent "SELECT COUNT(*) FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys');" 2>/dev/null | head -n 1 | tr -d '\r')
-DB_VIEWS_COUNT=$(mysql_query_silent "SELECT COUNT(*) FROM information_schema.tables WHERE table_type='VIEW' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys');" 2>/dev/null | head -n 1 | tr -d '\r')
-DB_INDEXES_COUNT=$(mysql_query_silent "SELECT COUNT(DISTINCT CONCAT(table_name, table_schema, index_name)) FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys');" 2>/dev/null | head -n 1 | tr -d '\r')
+DB_TABLES_COUNT=$(mysql_query_silent "SELECT COUNT(*) FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables);" 2>/dev/null | head -n 1 | tr -d '\r')
+DB_VIEWS_COUNT=$(mysql_query_silent "SELECT COUNT(*) FROM information_schema.tables WHERE table_type='VIEW' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs);" 2>/dev/null | head -n 1 | tr -d '\r')
+DB_INDEXES_COUNT=$(mysql_query_silent "SELECT COUNT(DISTINCT CONCAT(table_name, table_schema, index_name)) FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables);" 2>/dev/null | head -n 1 | tr -d '\r')
 
-DB_SUMMARY_TSV=$(mysql_query_silent "SELECT IFNULL(SUM(table_rows),0), IFNULL(SUM(data_length),0), IFNULL(SUM(index_length),0), IFNULL(SUM(data_length+index_length),0), COUNT(table_name), COUNT(DISTINCT table_collation), COUNT(DISTINCT engine) FROM information_schema.tables WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys');" 2>/dev/null | head -n 1 | tr -d '\r')
+DB_SUMMARY_TSV=$(mysql_query_silent "SELECT IFNULL(SUM(table_rows),0), IFNULL(SUM(data_length),0), IFNULL(SUM(index_length),0), IFNULL(SUM(data_length+index_length),0), COUNT(table_name), COUNT(DISTINCT table_collation), COUNT(DISTINCT engine) FROM information_schema.tables WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables);" 2>/dev/null | head -n 1 | tr -d '\r')
 DB_TOTAL_ROWS=$(printf '%s' "$DB_SUMMARY_TSV" | awk -F"\t" '{print $1}')
 DB_DATA_BYTES=$(printf '%s' "$DB_SUMMARY_TSV" | awk -F"\t" '{print $2}')
 DB_INDEX_BYTES=$(printf '%s' "$DB_SUMMARY_TSV" | awk -F"\t" '{print $3}')
@@ -657,15 +691,15 @@ DB_ENGINES_JSON=$(mysql_query_silent "SELECT DISTINCT engine FROM information_sc
 DB_ENGINES_COUNT=$(printf '%s' "$DB_ENGINES_JSON" | jq -r 'length')
 
 # Per-database breakdown (best-effort)
-DB_BREAKDOWN_JSON=$(mysql_query_silent "SELECT table_schema, IFNULL(SUM(table_rows),0) AS rows, IFNULL(SUM(data_length),0) AS data_bytes, IFNULL(SUM(index_length),0) AS index_bytes, IFNULL(SUM(data_length+index_length),0) AS total_bytes, COUNT(CASE WHEN table_type='BASE TABLE' THEN 1 END) AS tables, COUNT(CASE WHEN table_type='VIEW' THEN 1 END) AS views, COUNT(DISTINCT engine) AS engines, COUNT(DISTINCT table_collation) AS collations FROM information_schema.tables WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys') GROUP BY table_schema ORDER BY total_bytes DESC;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], rows:(.[1]|tonumber), data_bytes:(.[2]|tonumber), index_bytes:(.[3]|tonumber), total_bytes:(.[4]|tonumber), tables:(.[5]|tonumber), views:(.[6]|tonumber), engines:(.[7]|tonumber), collations:(.[8]|tonumber)}]')
+DB_BREAKDOWN_JSON=$(mysql_query_silent "SELECT table_schema, IFNULL(SUM(table_rows),0) AS rows, IFNULL(SUM(data_length),0) AS data_bytes, IFNULL(SUM(index_length),0) AS index_bytes, IFNULL(SUM(data_length+index_length),0) AS total_bytes, COUNT(CASE WHEN table_type='BASE TABLE' THEN 1 END) AS tables, COUNT(CASE WHEN table_type='VIEW' THEN 1 END) AS views, COUNT(DISTINCT engine) AS engines, COUNT(DISTINCT table_collation) AS collations FROM information_schema.tables WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema ORDER BY total_bytes DESC;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], rows:(.[1]|tonumber), data_bytes:(.[2]|tonumber), index_bytes:(.[3]|tonumber), total_bytes:(.[4]|tonumber), tables:(.[5]|tonumber), views:(.[6]|tonumber), engines:(.[7]|tonumber), collations:(.[8]|tonumber)}]')
 DB_BREAKDOWN_COUNT=$(printf '%s' "$DB_BREAKDOWN_JSON" | jq -r 'length')
 
 # Largest tables (best-effort)
-LARGEST_TABLES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, engine, IFNULL(table_rows,0), IFNULL(data_length,0), IFNULL(index_length,0), IFNULL(data_length+index_length,0) AS total_bytes, CAST(IFNULL(data_free,0) AS SIGNED) AS data_free FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys') ORDER BY total_bytes DESC LIMIT 20;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2], rows:(.[3]|tonumber), data_bytes:(.[4]|tonumber), index_bytes:(.[5]|tonumber), total_bytes:(.[6]|tonumber), data_free_bytes:(.[7]|tonumber)}]')
+LARGEST_TABLES_JSON=$(mysql_query_silent "SELECT table_schema, table_name, engine, IFNULL(table_rows,0), IFNULL(data_length,0), IFNULL(index_length,0), IFNULL(data_length+index_length,0) AS total_bytes, CAST(IFNULL(data_free,0) AS SIGNED) AS data_free FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) ORDER BY total_bytes DESC LIMIT 20;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], table:.[1], engine:.[2], rows:(.[3]|tonumber), data_bytes:(.[4]|tonumber), index_bytes:(.[5]|tonumber), total_bytes:(.[6]|tonumber), data_free_bytes:(.[7]|tonumber)}]')
 LARGEST_TABLES_COUNT=$(printf '%s' "$LARGEST_TABLES_JSON" | jq -r 'length')
 
 # Index counts per database (best-effort)
-DB_INDEX_BREAKDOWN_JSON=$(mysql_query_silent "SELECT table_schema, COUNT(DISTINCT CONCAT(table_name, index_name)) AS indexes FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys') GROUP BY table_schema ORDER BY indexes DESC;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], indexes:(.[1]|tonumber)}]')
+DB_INDEX_BREAKDOWN_JSON=$(mysql_query_silent "SELECT table_schema, COUNT(DISTINCT CONCAT(table_name, index_name)) AS indexes FROM information_schema.statistics WHERE table_schema NOT IN ('mysql','performance_schema','information_schema','sys')$(ignore_sql_dbs)$(ignore_sql_tables) GROUP BY table_schema ORDER BY indexes DESC;" 2>/dev/null | jq -Rn '[inputs | select(length>0) | split("\t") | {schema:.[0], indexes:(.[1]|tonumber)}]')
 DB_INDEX_BREAKDOWN_COUNT=$(printf '%s' "$DB_INDEX_BREAKDOWN_JSON" | jq -r 'length')
 
 # Views / routines / triggers inventory (best-effort)
